@@ -1,12 +1,13 @@
 """ utils """
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Sequence, TypedDict
 
 from IPython.display import display # type: ignore
 import ipywidgets as widgets # type: ignore
+import pandas as pd
 
-from PIL import Image
+from PIL import Image, ImageColor, ImageDraw
 
 
 class ImageDirViewer:
@@ -69,97 +70,74 @@ class InferViewer:
         )
         widgets.interact(self.view_image_cb, index=slider)
 
-# @title Plotting Util
+class BBox(TypedDict):
+   xyxyn: tuple[float, float, float, float]
+   label: str
 
-# Get Noto JP font to display janapese characters
-!apt-get install fonts-noto-cjk  # For Noto Sans CJK JP
-
-#!apt-get install fonts-source-han-sans-jp # For Source Han Sans (Japanese)
-
-import json
-import random
-import io
-from PIL import Image, ImageDraw, ImageFont
-from PIL import ImageColor
-
-additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
+def bbs_to_df(bboxes: Sequence[BBox], sort=True) -> pd.DataFrame:
+    df = pd.DataFrame(
+        [{
+            'label': b['label'],
+            'x1': b['xyxyn'][0], 'y1': b['xyxyn'][1], 
+            'x2': b['xyxyn'][2], 'y2': b['xyxyn'][3]
+            } for b in bboxes])
+    if sort:
+        df = df.sort_values('label').reset_index(drop=True)
+    return df
 
 
-# Based on https://colab.research.google.com/github/google-gemini/cookbook/blob/main/quickstarts/Spatial_understanding.ipynb#scrollTo=oxK0pycZm4AY
-def plot_bounding_boxes(im, bounding_boxes):
+
+def plot_bb(img: Image.Image, bboxes: Sequence[BBox], classes: Sequence[str]) -> Image.Image:
     """
-    Plots bounding boxes on an image with markers for each a name, using PIL, normalized coordinates, and different colors.
-
-    Args:
-        img_path: The path to the image file.
-        bounding_boxes: A list of bounding boxes containing the name of the object
-         and their positions in normalized [y1 x1 y2 x2] format.
+    Plot bounding boxes
     """
-
-    # Load the image
-    img = im
+    img = img.copy()
     width, height = img.size
-    print(img.size)
-    # Create a drawing object
     draw = ImageDraw.Draw(img)
 
     # Define a list of colors
-    colors = [
-    'red',
-    'green',
-    'blue',
-    'yellow',
-    'orange',
-    'pink',
-    'purple',
-    'brown',
-    'gray',
-    'beige',
-    'turquoise',
-    'cyan',
-    'magenta',
-    'lime',
-    'navy',
-    'maroon',
-    'teal',
-    'olive',
-    'coral',
-    'lavender',
-    'violet',
-    'gold',
-    'silver',
+    additional_colors = [colorname for (colorname, _) in ImageColor.colormap.items()]
+    colors = [ 'red', 'green', 'blue', 'yellow', 'orange', 'pink', 'purple',
+    'brown', 'gray', 'beige', 'turquoise', 'cyan', 'magenta', 'lime', 'navy',
+    'maroon', 'teal', 'olive', 'coral', 'lavender', 'violet', 'gold', 'silver',
     ] + additional_colors
 
-    # Parsing out the markdown fencing
-    bounding_boxes = parse_json(bounding_boxes)
+    color_map = {classes[i]: colors[i] for i in range(len(classes))}
+    for bbox in bboxes:
+        color = color_map[bbox['label']]
+        # Convert normalized coordinates to absolute coordinates
+        abs_x1 = int(bbox['xyxyn'][0] * width)
+        abs_y1 = int(bbox['xyxyn'][1] * height)
+        abs_x2 = int(bbox['xyxyn'][2] * width)
+        abs_y2 = int(bbox['xyxyn'][3] * height)
 
-    font = ImageFont.truetype("NotoSansCJK-Regular.ttc", size=14)
+        if abs_x1 > abs_x2:
+            abs_x1, abs_x2 = abs_x2, abs_x1
 
-    # Iterate over the bounding boxes
-    for i, bounding_box in enumerate(json.loads(bounding_boxes)):
-      # Select a color from the list
-      color = colors[i % len(colors)]
+        if abs_y1 > abs_y2:
+            abs_y1, abs_y2 = abs_y2, abs_y1
 
-      # Convert normalized coordinates to absolute coordinates
-      abs_y1 = int(bounding_box["box_2d"][0]/1000 * height)
-      abs_x1 = int(bounding_box["box_2d"][1]/1000 * width)
-      abs_y2 = int(bounding_box["box_2d"][2]/1000 * height)
-      abs_x2 = int(bounding_box["box_2d"][3]/1000 * width)
+        # Draw the bounding box
+        draw.rectangle(
+            ((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=4
+        )
 
-      if abs_x1 > abs_x2:
-        abs_x1, abs_x2 = abs_x2, abs_x1
+        # Draw the text
+        draw.text((abs_x1 + 8, abs_y1 + 6), bbox["label"], fill=color)
 
-      if abs_y1 > abs_y2:
-        abs_y1, abs_y2 = abs_y2, abs_y1
+    return img
 
-      # Draw the bounding box
-      draw.rectangle(
-          ((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=4
-      )
-
-      # Draw the text
-      if "label" in bounding_box:
-        draw.text((abs_x1 + 8, abs_y1 + 6), bounding_box["label"], fill=color, font=font)
-
-    # Display the image
-    img.show()
+def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
+    """
+    The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.
+    [
+    {"box_2d": [386, 362, 513, 442], "label": "chicken"},
+    {"box_2d": [334, 375, 361, 412], "label": "cow"},
+    {"box_2d": [336, 290, 427, 396], "label": "pig"}
+    ]
+    """
+    def _cvt_gemini(gbbox: dict[str, Any]) -> BBox:
+        ymin, xmin, ymax, xmax = gbbox["box_2d"]
+        xyxyn = (xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000)
+        return BBox(xyxyn=xyxyn, label=gbbox["label"])
+    return [_cvt_gemini(_g) for _g in gemini_bboxes]
