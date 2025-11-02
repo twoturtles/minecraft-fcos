@@ -1,5 +1,6 @@
 """utils"""
 
+import logging
 from pathlib import Path
 from typing import Any, Callable, Sequence, TypedDict
 
@@ -7,6 +8,67 @@ import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from IPython.display import display  # type: ignore
 from PIL import Image, ImageColor, ImageDraw
+
+LOG = logging.getLogger(__name__)
+
+##
+# Logging
+
+
+def logging_add_arg(
+    parser: argparse.ArgumentParser, default: int | str = "INFO"
+) -> None:
+    """Add a default logging argument to argparse"""
+    parser.add_argument(
+        "--log-level",
+        "-L",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=default,
+        help="Set the logging level (default: INFO)",
+    )
+
+
+_FMT = "[%(asctime)s] [%(threadName)s/%(levelname)s] (%(name)s) %(message)s"
+_DATEFMT = "%H:%M:%S"
+
+
+def logging_init(
+    *,
+    args: argparse.Namespace | None = None,
+    level: int | str | None = None,
+    use_colors: bool = True,
+) -> None:
+    """Default log init. If args are passed (see logging_add_arg), level is pulled
+    from that. Otherwise uses a passed in level. Finally defaults to INFO"""
+    if args is not None:
+        level = getattr(logging, args.log_level.upper(), logging.INFO)
+    elif level is None:
+        level = logging.INFO
+
+    if use_colors:
+        handler = logging.StreamHandler()
+        handler.setFormatter(LogColorFormatter())
+        logging.basicConfig(level=level, handlers=[handler])
+    else:
+        logging.basicConfig(level=level, format=_FMT, datefmt=_DATEFMT)
+
+
+class LogColorFormatter(logging.Formatter):
+    LEVEL_COLORS = {
+        logging.DEBUG: "\033[36m",  # Cyan
+        logging.INFO: "\033[32m",  # Green
+        logging.WARNING: "\033[33m",  # Yellow
+        logging.ERROR: "\033[31m",  # Red
+        logging.CRITICAL: "\033[41m",  # Red background
+    }
+
+    RESET = "\033[0m"
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.LEVEL_COLORS.get(record.levelno, "")
+        fmt = f"{color}{_FMT}{self.RESET}"
+        formatter = logging.Formatter(fmt, datefmt=_DATEFMT)
+        return formatter.format(record)
 
 
 class ImageDirViewer:
