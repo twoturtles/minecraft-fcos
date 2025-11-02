@@ -15,36 +15,16 @@ LOG = logging.getLogger(__name__)
 # Logging
 
 
-def logging_add_arg(
-    parser: argparse.ArgumentParser, default: int | str = "INFO"
-) -> None:
-    """Add a default logging argument to argparse"""
-    parser.add_argument(
-        "--log-level",
-        "-L",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default=default,
-        help="Set the logging level (default: INFO)",
-    )
-
-
-_FMT = "[%(asctime)s] [%(threadName)s/%(levelname)s] (%(name)s) %(message)s"
+# _FMT = "[%(asctime)s] [%(threadName)s/%(levelname)s] (%(name)s) %(message)s"
+_FMT = "[%(asctime)s]:[%(levelname)s]:(%(name)s): %(message)s"
 _DATEFMT = "%H:%M:%S"
 
 
 def logging_init(
     *,
-    args: argparse.Namespace | None = None,
-    level: int | str | None = None,
+    level: int = logging.INFO,
     use_colors: bool = True,
 ) -> None:
-    """Default log init. If args are passed (see logging_add_arg), level is pulled
-    from that. Otherwise uses a passed in level. Finally defaults to INFO"""
-    if args is not None:
-        level = getattr(logging, args.log_level.upper(), logging.INFO)
-    elif level is None:
-        level = logging.INFO
-
     if use_colors:
         handler = logging.StreamHandler()
         handler.setFormatter(LogColorFormatter())
