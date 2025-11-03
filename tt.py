@@ -1,5 +1,6 @@
 """utils"""
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Callable, Self, Sequence, TypedDict
@@ -50,6 +51,10 @@ class LogColorFormatter(logging.Formatter):
         fmt = f"{color}{_FMT}{self.RESET}"
         formatter = logging.Formatter(fmt, datefmt=_DATEFMT)
         return formatter.format(record)
+
+
+##
+# Image / BBox
 
 
 class ImageDirViewer:
@@ -142,34 +147,7 @@ def plot_bb(
     width, height = img.size
     draw = ImageDraw.Draw(img)
 
-    # Define a list of colors
-    additional_colors = [colorname for (colorname, _) in ImageColor.colormap.items()]
-    colors = [
-        "red",
-        "green",
-        "blue",
-        "yellow",
-        "orange",
-        "pink",
-        "purple",
-        "brown",
-        "gray",
-        "beige",
-        "turquoise",
-        "cyan",
-        "magenta",
-        "lime",
-        "navy",
-        "maroon",
-        "teal",
-        "olive",
-        "coral",
-        "lavender",
-        "violet",
-        "gold",
-        "silver",
-    ] + additional_colors
-
+    colors = Colors.get()
     color_map = {classes[i]: colors[i] for i in range(len(classes))}
     for bbox in bboxes:
         color = color_map[bbox["label"]]
@@ -186,10 +164,10 @@ def plot_bb(
             abs_y1, abs_y2 = abs_y2, abs_y1
 
         # Draw the bounding box
-        draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=4)
+        draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=2)
 
         # Draw the text
-        draw.text((abs_x1 + 8, abs_y1 + 6), bbox["label"], fill=color, font_size=16)
+        draw.text((abs_x1 + 4, abs_y1 + 2), bbox["label"], fill=color, font_size=16)
 
     return img
 
@@ -252,3 +230,61 @@ class GeminiFile:
             assert gfile.name is not None
             self.rm(name=gfile.name)
         self.gfiles = []
+
+
+"""
+TODO:
+https://ai.google.dev/gemini-api/docs/batch-api
+The Gemini Batch API is designed to process large volumes of requests
+asynchronously at 50% of the standard cost. The target turnaround time is 24
+hours, but in majority of cases, it is much quicker.
+"""
+
+
+def gemini_detect(
+    image: Image.Image | genai.types.File,
+    prompt: str,
+    model: str = "gemini-2.5-flash-lite",
+    tempurature: float | None = 0.0,
+    seed: int | None = 325,
+) -> list[BBox]:
+    client = genai.Client()
+    config = genai.types.GenerateContentConfig(
+        response_mime_type="application/json",
+        thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
+        temperature=tempurature,
+        seed=seed,
+    )
+    response = client.models.generate_content(
+        model=model, contents=[image, prompt], config=config
+    )
+    assert response.text is not None
+    bounding_boxes: list[dict[str, Any]] = json.loads(response.text)
+    return gemini_to_bboxes(bounding_boxes)
+
+
+##
+# Colors
+
+
+class Colors:
+    schemes = dict(
+        # https://github.com/d3/d3-scale-chromatic/blob/main/src/categorical/category10.js
+        category10="1f77b4ff7f0e2ca02cd627289467bd8c564be377c27f7f7fbcbd2217becf",
+        # https://github.com/vega/vega/blob/main/packages/vega-scale/src/palettes.js
+        category20="1f77b4aec7e8ff7f0effbb782ca02c98df8ad62728ff98969467bdc5b0d58c564bc49c94e377c2f7b6d27f7f7fc7c7c7bcbd22dbdb8d17becf9edae5",
+        category20b="393b795254a36b6ecf9c9ede6379398ca252b5cf6bcedb9c8c6d31bd9e39e7ba52e7cb94843c39ad494ad6616be7969c7b4173a55194ce6dbdde9ed6",
+        category20c="3182bd6baed69ecae1c6dbefe6550dfd8d3cfdae6bfdd0a231a35474c476a1d99bc7e9c0756bb19e9ac8bcbddcdadaeb636363969696bdbdbdd9d9d9",
+    )
+
+    @classmethod
+    def get(cls, scheme: str = "category20") -> tuple[tuple[int, int, int], ...]:
+        """Get a color scheme as a tuple of RGB tuples."""
+        hex_string = cls.schemes[scheme]
+        # Split into 6-character chunks
+        hex_colors = [hex_string[i : i + 6] for i in range(0, len(hex_string), 6)]
+        # Convert each hex color to RGB tuple
+        rgb_colors: list[tuple[int, int, int]] = []
+        for h in hex_colors:
+            rgb_colors.append((int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)))
+        return tuple(rgb_colors)
