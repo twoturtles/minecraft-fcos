@@ -2,10 +2,11 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Sequence, TypedDict
+from typing import Any, Callable, Self, Sequence, TypedDict
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
+from google import genai
 from IPython.display import display  # type: ignore
 from PIL import Image, ImageColor, ImageDraw
 
@@ -78,34 +79,30 @@ class ImageDirViewer:
         widgets.interact(self.view_image_cb, index=slider)
 
 
-class InferViewer:
+class InferViewer[T]:
     def __init__(
         self,
-        infer_fn: Callable[[str | Path], Image.Image],
-        image_dir: str | Path,
-        glob_pat: str = "*.png",
+        infer_fn: Callable[[T], tuple[Image.Image, str]],
+        infer_list: list[T],
     ):
-        self.image_dir = image_dir
-        self.image_files = sorted(Path(image_dir).glob(glob_pat))
+        # self.image_dir = image_dir
+        # self.image_files = sorted(Path(image_dir).glob(glob_pat))
         self.infer_fn = infer_fn
-        self.current_file = None
-        self.current_index = 0
+        self.infer_list = infer_list
+        # self.current_file = None
+        # self.current_index = 0
 
     def view_image_cb(self, index: int):
-        self.current_index = index
-        self.current_file = self.image_files[index]
-
         # Call the provided inference function
-        image = self.infer_fn(self.current_file)
-        print(f"dir={self.image_dir} n_images={len(self.image_files)}")
-        print(f"index={index} file={self.current_file.name}")
+        image, description = self.infer_fn(self.infer_list[index])
+        print(f"index={index} desc={description}")
         display(image)
 
     def show_widget(self):
         slider = widgets.IntSlider(
             value=0,
             min=0,
-            max=len(self.image_files) - 1,
+            max=len(self.infer_list) - 1,
             description="Image:",
             continuous_update=False,
         )
@@ -117,7 +114,7 @@ class BBox(TypedDict):
     label: str
 
 
-def bbs_to_df(bboxes: Sequence[BBox], sort=True) -> pd.DataFrame:
+def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
     df = pd.DataFrame(
         [
             {
@@ -192,9 +189,13 @@ def plot_bb(
         draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=4)
 
         # Draw the text
-        draw.text((abs_x1 + 8, abs_y1 + 6), bbox["label"], fill=color)
+        draw.text((abs_x1 + 8, abs_y1 + 6), bbox["label"], fill=color, font_size=16)
 
     return img
+
+
+##
+# Gemini
 
 
 def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
@@ -213,3 +214,41 @@ def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
         return BBox(xyxyn=xyxyn, label=gbbox["label"])
 
     return [_cvt_gemini(_g) for _g in gemini_bboxes]
+
+
+class GeminiFile:
+
+    def __init__(self, client: genai.Client | None = None, sync: bool = True) -> None:
+        if client is None:
+            client = genai.Client()
+        self.client = client
+        self.gfiles: list[genai.types.File] = []
+        if sync:
+            self.sync()
+
+    def sync(self):
+        self.gfiles = list(self.client.files.list())
+
+    def upload_file(self, file: str | Path) -> genai.types.File:
+        path = Path(file).absolute()
+        gfile = self.client.files.upload(
+            file=path,
+            config=genai.types.UploadFileConfig(display_name=str(path)),
+        )
+        return gfile
+
+    def upload_dir(self, dir_path: str | Path, glob_pat: str = "*.png"):
+        dir_path = Path(dir_path).absolute()
+        files = sorted(dir_path.glob(glob_pat))
+        for file in files:
+            self.upload_file(file)
+
+    def rm(self, name: str) -> None:
+        self.client.files.delete(name=name)
+
+    def clear(self) -> None:
+        self.sync()
+        for gfile in self.gfiles:
+            assert gfile.name is not None
+            self.rm(name=gfile.name)
+        self.gfiles = []
