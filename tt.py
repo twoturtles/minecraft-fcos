@@ -2,14 +2,17 @@
 
 import json
 import logging
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Self, Sequence, TypedDict
+from typing import Any, Callable, Self, Sequence
 
+import dacite
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
 from IPython.display import display  # type: ignore
-from PIL import Image, ImageColor, ImageDraw
+from PIL import Image as PImage
+from PIL import ImageDraw
 
 LOG = logging.getLogger(__name__)
 
@@ -68,7 +71,7 @@ class ImageDirViewer:
         self.current_index = index
         self.current_file = self.image_files[index]
 
-        img = Image.open(self.current_file)
+        img = PImage.open(self.current_file)
         print(f"dir={self.image_dir} n_images={len(self.image_files)}")
         print(f"index={index} file={self.current_file.name}")
         display(img)
@@ -87,7 +90,7 @@ class ImageDirViewer:
 class InferViewer[T]:
     def __init__(
         self,
-        infer_fn: Callable[[T], tuple[Image.Image, str]],
+        infer_fn: Callable[[T], tuple[PImage.Image, str]],
         infer_list: list[T],
     ):
         # self.image_dir = image_dir
@@ -114,9 +117,41 @@ class InferViewer[T]:
         widgets.interact(self.view_image_cb, index=slider)
 
 
-class BBox(TypedDict):
+@dataclass
+class BBox:
     xyxyn: tuple[float, float, float, float]
     label: str
+
+
+@dataclass
+class Image:
+    file: str
+    bboxes: list[BBox]
+
+
+@dataclass
+class Dataset:
+    classes: list[str]
+    images: list[Image]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
+        return dacite.from_dict(data_class=cls, data=dataset_dict)
+
+    def save(self, path: str | Path):
+        path = Path(path)
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load(cls, path: str | Path) -> Self:
+        path = Path(path)
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
 
 
 def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
@@ -138,8 +173,8 @@ def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
 
 
 def plot_bb(
-    img: Image.Image, bboxes: Sequence[BBox], classes: Sequence[str]
-) -> Image.Image:
+    img: PImage.Image, bboxes: Sequence[BBox], classes: Sequence[str]
+) -> PImage.Image:
     """
     Plot bounding boxes
     """
@@ -150,12 +185,12 @@ def plot_bb(
     colors = Colors.get()
     color_map = {classes[i]: colors[i] for i in range(len(classes))}
     for bbox in bboxes:
-        color = color_map[bbox["label"]]
+        color = color_map[bbox.label]
         # Convert normalized coordinates to absolute coordinates
-        abs_x1 = int(bbox["xyxyn"][0] * width)
-        abs_y1 = int(bbox["xyxyn"][1] * height)
-        abs_x2 = int(bbox["xyxyn"][2] * width)
-        abs_y2 = int(bbox["xyxyn"][3] * height)
+        abs_x1 = int(bbox.xyxyn[0] * width)
+        abs_y1 = int(bbox.xyxyn[1] * height)
+        abs_x2 = int(bbox.xyxyn[2] * width)
+        abs_y2 = int(bbox.xyxyn[3] * height)
 
         if abs_x1 > abs_x2:
             abs_x1, abs_x2 = abs_x2, abs_x1
@@ -167,7 +202,7 @@ def plot_bb(
         draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=2)
 
         # Draw the text
-        draw.text((abs_x1 + 4, abs_y1 + 2), bbox["label"], fill=color, font_size=16)
+        draw.text((abs_x1 + 4, abs_y1 + 2), bbox.label, fill=color, font_size=16)
 
     return img
 
@@ -194,7 +229,7 @@ def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
     return [_cvt_gemini(_g) for _g in gemini_bboxes]
 
 
-class GeminiFile:
+class GeminiFileAPI:
 
     def __init__(self, client: genai.Client | None = None, sync: bool = True) -> None:
         if client is None:
@@ -242,7 +277,7 @@ hours, but in majority of cases, it is much quicker.
 
 
 def gemini_detect(
-    image: Image.Image | genai.types.File,
+    image: PImage.Image | genai.types.File,
     prompt: str,
     model: str = "gemini-2.5-flash-lite",
     tempurature: float | None = 0.0,
@@ -259,6 +294,7 @@ def gemini_detect(
         model=model, contents=[image, prompt], config=config
     )
     assert response.text is not None
+    LOG.info(f"RESPONSE len={len(response.text)} {response.text}")
     bounding_boxes: list[dict[str, Any]] = json.loads(response.text)
     return gemini_to_bboxes(bounding_boxes)
 
