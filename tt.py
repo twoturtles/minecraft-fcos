@@ -69,11 +69,10 @@ class BBox:
 @dataclass
 class ImageResult:
     file: str
-    classes: list[str]
     bboxes: list[BBox]
 
-    def plot_bb(self) -> Image.Image:
-        return plot_bb(Image.open(self.file), self.bboxes, self.classes)
+    def plot_bb(self, classes: list[str] | None = None) -> Image.Image:
+        return plot_bb(Image.open(self.file), self.bboxes, classes)
 
 
 @dataclass
@@ -139,19 +138,17 @@ class InferViewer[T]:
         self,
         infer_fn: Callable[[T], ImageResult],
         infer_list: list[T],
+        classes: list[str] | None = None,
     ):
-        # self.image_dir = image_dir
-        # self.image_files = sorted(Path(image_dir).glob(glob_pat))
         self.infer_fn = infer_fn
         self.infer_list = infer_list
-        # self.current_file = None
-        # self.current_index = 0
+        self.classes = classes
 
     def view_image_cb(self, index: int):
         # Call the provided inference function
         result = self.infer_fn(self.infer_list[index])
         print(f"index={index} file={result.file}")
-        display(result.plot_bb())
+        display(result.plot_bb(classes=self.classes))
 
     def show_widget(self):
         slider = widgets.IntSlider(
@@ -183,7 +180,7 @@ def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
 
 
 def plot_bb(
-    img: Image.Image, bboxes: Sequence[BBox], classes: Sequence[str]
+    img: Image.Image, bboxes: Sequence[BBox], classes: Sequence[str] | None
 ) -> Image.Image:
     """
     Plot bounding boxes
@@ -191,6 +188,10 @@ def plot_bb(
     img = img.copy()
     width, height = img.size
     draw = ImageDraw.Draw(img)
+
+    if classes is None:
+        # Use labels to create class set.
+        classes = sorted(list(set([bbox.label for bbox in bboxes])))
 
     colors = Colors.get()
     color_map = {classes[i]: colors[i] for i in range(len(classes))}
@@ -331,7 +332,7 @@ def gemini_detect_gfile(
 ) -> ImageResult:
     assert gfile.display_name is not None
     bbs = gemini_gen_bboxes(gfile, qcfg)
-    return ImageResult(gfile.display_name, qcfg.classes, bbs)
+    return ImageResult(gfile.display_name, bbs)
 
 
 ##
