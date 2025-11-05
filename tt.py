@@ -11,8 +11,8 @@ import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
 from IPython.display import display  # type: ignore
-from PIL import Image as PImage
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
+from tqdm import tqdm
 
 LOG = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class ImageDirViewer:
         self.current_index = index
         self.current_file = self.image_files[index]
 
-        img = PImage.open(self.current_file)
+        img = Image.open(self.current_file)
         print(f"dir={self.image_dir} n_images={len(self.image_files)}")
         print(f"index={index} file={self.current_file.name}")
         display(img)
@@ -88,9 +88,11 @@ class ImageDirViewer:
 
 
 class InferViewer[T]:
+    """Pass list and function that turns list items into an image and description."""
+
     def __init__(
         self,
-        infer_fn: Callable[[T], tuple[PImage.Image, str]],
+        infer_fn: Callable[[T], tuple[Image.Image, str]],
         infer_list: list[T],
     ):
         # self.image_dir = image_dir
@@ -124,7 +126,7 @@ class BBox:
 
 
 @dataclass
-class Image:
+class ImageResult:
     file: str
     bboxes: list[BBox]
 
@@ -132,7 +134,7 @@ class Image:
 @dataclass
 class Dataset:
     classes: list[str]
-    images: list[Image]
+    images: list[ImageResult]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -173,8 +175,8 @@ def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
 
 
 def plot_bb(
-    img: PImage.Image, bboxes: Sequence[BBox], classes: Sequence[str]
-) -> PImage.Image:
+    img: Image.Image, bboxes: Sequence[BBox], classes: Sequence[str]
+) -> Image.Image:
     """
     Plot bounding boxes
     """
@@ -209,6 +211,10 @@ def plot_bb(
 
 ##
 # Gemini
+
+MODEL_DEFAULT = "gemini-2.5-flash-lite"
+TEMPURATURE_DEFAULT = 0.0
+SEED_DEFAULT = 325
 
 
 def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
@@ -253,7 +259,7 @@ class GeminiFileAPI:
     def upload_dir(self, dir_path: str | Path, glob_pat: str = "*.png"):
         dir_path = Path(dir_path).absolute()
         files = sorted(dir_path.glob(glob_pat))
-        for file in files:
+        for file in tqdm(files):
             self.upload_file(file)
 
     def rm(self, name: str) -> None:
@@ -277,17 +283,17 @@ hours, but in majority of cases, it is much quicker.
 
 
 def gemini_detect(
-    image: PImage.Image | genai.types.File,
+    image: Image.Image | genai.types.File,
     prompt: str,
-    model: str = "gemini-2.5-flash-lite",
-    tempurature: float | None = 0.0,
-    seed: int | None = 325,
+    model: str = MODEL_DEFAULT,
+    temperature: float | None = TEMPURATURE_DEFAULT,
+    seed: int | None = SEED_DEFAULT,
 ) -> list[BBox]:
     client = genai.Client()
     config = genai.types.GenerateContentConfig(
         response_mime_type="application/json",
         thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
-        temperature=tempurature,
+        temperature=temperature,
         seed=seed,
     )
     response = client.models.generate_content(
@@ -297,6 +303,24 @@ def gemini_detect(
     LOG.info(f"RESPONSE len={len(response.text)} {response.text}")
     bounding_boxes: list[dict[str, Any]] = json.loads(response.text)
     return gemini_to_bboxes(bounding_boxes)
+
+
+def gemini_detect_multi(
+    gfiles: list[genai.types.File],
+    prompt: str,
+    model: str = MODEL_DEFAULT,
+    temperature: float | None = TEMPURATURE_DEFAULT,
+    seed: int | None = SEED_DEFAULT,
+) -> list[ImageResult]:
+    results: list[ImageResult] = []
+    for i, gfile in enumerate(tqdm(gfiles)):
+        LOG.info(f"Detect {i+1}/{len(gfiles)} file={gfile.display_name}")
+        assert gfile.display_name is not None
+        bbs = gemini_detect(
+            gfile, prompt, model=model, temperature=temperature, seed=seed
+        )
+        results.append(ImageResult(gfile.display_name, bbs))
+    return results
 
 
 ##
