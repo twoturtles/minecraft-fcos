@@ -60,6 +60,51 @@ class LogColorFormatter(logging.Formatter):
 # Image / BBox
 
 
+@dataclass
+class BBox:
+    xyxyn: tuple[float, float, float, float]
+    label: str
+
+
+@dataclass
+class ImageResult:
+    file: str
+    classes: list[str]
+    bboxes: list[BBox]
+
+    def plot_bb(self) -> Image.Image:
+        return plot_bb(Image.open(self.file), self.bboxes, self.classes)
+
+
+@dataclass
+class Dataset:
+    images: list[ImageResult]
+    classes: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
+        return dacite.from_dict(data_class=cls, data=dataset_dict)
+
+    def save(self, path: str | Path):
+        path = Path(path)
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load(cls, path: str | Path) -> Self:
+        path = Path(path)
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+
+##
+# Viewers
+
+
 class ImageDirViewer:
     def __init__(self, image_dir: str | Path, glob_pat: str = "*.png"):
         self.image_dir = image_dir
@@ -88,11 +133,11 @@ class ImageDirViewer:
 
 
 class InferViewer[T]:
-    """Pass list and function that turns list items into an image and description."""
+    """Pass list and function that turns a list item into an ImageResult."""
 
     def __init__(
         self,
-        infer_fn: Callable[[T], tuple[Image.Image, str]],
+        infer_fn: Callable[[T], ImageResult],
         infer_list: list[T],
     ):
         # self.image_dir = image_dir
@@ -104,9 +149,9 @@ class InferViewer[T]:
 
     def view_image_cb(self, index: int):
         # Call the provided inference function
-        image, description = self.infer_fn(self.infer_list[index])
-        print(f"index={index} desc={description}")
-        display(image)
+        result = self.infer_fn(self.infer_list[index])
+        print(f"index={index} file={result.file}")
+        display(result.plot_bb())
 
     def show_widget(self):
         slider = widgets.IntSlider(
@@ -119,52 +164,15 @@ class InferViewer[T]:
         widgets.interact(self.view_image_cb, index=slider)
 
 
-@dataclass
-class BBox:
-    xyxyn: tuple[float, float, float, float]
-    label: str
-
-
-@dataclass
-class ImageResult:
-    file: str
-    bboxes: list[BBox]
-
-
-@dataclass
-class Dataset:
-    classes: list[str]
-    images: list[ImageResult]
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
-        return dacite.from_dict(data_class=cls, data=dataset_dict)
-
-    def save(self, path: str | Path):
-        path = Path(path)
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
-
-    @classmethod
-    def load(cls, path: str | Path) -> Self:
-        path = Path(path)
-        with open(path, "r") as f:
-            data = json.load(f)
-        return cls.from_dict(data)
-
-
 def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
     df = pd.DataFrame(
         [
             {
-                "label": b["label"],
-                "x1": b["xyxyn"][0],
-                "y1": b["xyxyn"][1],
-                "x2": b["xyxyn"][2],
-                "y2": b["xyxyn"][3],
+                "label": b.label,
+                "x1": b.xyxyn[0],
+                "y1": b.xyxyn[1],
+                "x2": b.xyxyn[2],
+                "y2": b.xyxyn[3],
             }
             for b in bboxes
         ]
@@ -212,9 +220,14 @@ def plot_bb(
 ##
 # Gemini
 
-MODEL_DEFAULT = "gemini-2.5-flash-lite"
-TEMPURATURE_DEFAULT = 0.0
-SEED_DEFAULT = 325
+
+@dataclass
+class GeminiQueryConfig:
+    prompt: str
+    classes: list[str]
+    model: str = "gemini-2.5-flash"
+    temperature: float | None = 0.0
+    seed: int | None = 325
 
 
 def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
@@ -282,22 +295,18 @@ hours, but in majority of cases, it is much quicker.
 """
 
 
-def gemini_detect(
-    image: Image.Image | genai.types.File,
-    prompt: str,
-    model: str = MODEL_DEFAULT,
-    temperature: float | None = TEMPURATURE_DEFAULT,
-    seed: int | None = SEED_DEFAULT,
+def gemini_gen_bboxes(
+    image: Image.Image | genai.types.File, qcfg: GeminiQueryConfig
 ) -> list[BBox]:
     client = genai.Client()
     config = genai.types.GenerateContentConfig(
         response_mime_type="application/json",
         thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
-        temperature=temperature,
-        seed=seed,
+        temperature=qcfg.temperature,
+        seed=qcfg.seed,
     )
     response = client.models.generate_content(
-        model=model, contents=[image, prompt], config=config
+        model=qcfg.model, contents=[image, qcfg.prompt], config=config
     )
     assert response.text is not None
     LOG.info(f"RESPONSE len={len(response.text)} {response.text}")
@@ -306,21 +315,23 @@ def gemini_detect(
 
 
 def gemini_detect_multi(
-    gfiles: list[genai.types.File],
-    prompt: str,
-    model: str = MODEL_DEFAULT,
-    temperature: float | None = TEMPURATURE_DEFAULT,
-    seed: int | None = SEED_DEFAULT,
+    gfiles: list[genai.types.File], qcfg: GeminiQueryConfig
 ) -> list[ImageResult]:
     results: list[ImageResult] = []
     for i, gfile in enumerate(tqdm(gfiles)):
         LOG.info(f"Detect {i+1}/{len(gfiles)} file={gfile.display_name}")
         assert gfile.display_name is not None
-        bbs = gemini_detect(
-            gfile, prompt, model=model, temperature=temperature, seed=seed
-        )
-        results.append(ImageResult(gfile.display_name, bbs))
+        result = gemini_detect_gfile(gfile, qcfg)
+        results.append(result)
     return results
+
+
+def gemini_detect_gfile(
+    gfile: genai.types.File, qcfg: GeminiQueryConfig
+) -> ImageResult:
+    assert gfile.display_name is not None
+    bbs = gemini_gen_bboxes(gfile, qcfg)
+    return ImageResult(gfile.display_name, qcfg.classes, bbs)
 
 
 ##
