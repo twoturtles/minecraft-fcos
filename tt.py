@@ -60,25 +60,25 @@ class LogColorFormatter(logging.Formatter):
 # Image / BBox
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BBox:
+    category: str
     xyxyn: tuple[float, float, float, float]
-    label: str
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ImageResult:
     file: str
     bboxes: list[BBox]
 
-    def plot_bb(self, classes: list[str] | None = None) -> Image.Image:
-        return plot_bb(Image.open(self.file), self.bboxes, classes)
+    def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
+        return plot_bb(Image.open(self.file), self.bboxes, categories)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Dataset:
+    categories: list[str]
     images: list[ImageResult]
-    classes: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -138,17 +138,17 @@ class InferViewer[T]:
         self,
         infer_fn: Callable[[T], ImageResult],
         infer_list: list[T],
-        classes: list[str] | None = None,
+        categories: list[str] | None = None,
     ):
         self.infer_fn = infer_fn
         self.infer_list = infer_list
-        self.classes = classes
+        self.categories = categories
 
     def view_image_cb(self, index: int):
         # Call the provided inference function
         result = self.infer_fn(self.infer_list[index])
         print(f"index={index} file={result.file}")
-        display(result.plot_bb(classes=self.classes))
+        display(result.plot_bb(categories=self.categories))
 
     def show_widget(self):
         slider = widgets.IntSlider(
@@ -165,7 +165,7 @@ def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
     df = pd.DataFrame(
         [
             {
-                "label": b.label,
+                "category": b.category,
                 "x1": b.xyxyn[0],
                 "y1": b.xyxyn[1],
                 "x2": b.xyxyn[2],
@@ -175,12 +175,12 @@ def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
         ]
     )
     if sort:
-        df = df.sort_values("label").reset_index(drop=True)
+        df = df.sort_values("category").reset_index(drop=True)
     return df
 
 
 def plot_bb(
-    img: Image.Image, bboxes: Sequence[BBox], classes: Sequence[str] | None
+    img: Image.Image, bboxes: Sequence[BBox], categories: Sequence[str] | None
 ) -> Image.Image:
     """
     Plot bounding boxes
@@ -189,14 +189,14 @@ def plot_bb(
     width, height = img.size
     draw = ImageDraw.Draw(img)
 
-    if classes is None:
-        # Use labels to create class set.
-        classes = sorted(list(set([bbox.label for bbox in bboxes])))
+    if categories is None:
+        # Use labels to create categories set.
+        categories = sorted(list(set([bbox.category for bbox in bboxes])))
 
     colors = Colors.get()
-    color_map = {classes[i]: colors[i] for i in range(len(classes))}
+    color_map = {categories[i]: colors[i] for i in range(len(categories))}
     for bbox in bboxes:
-        color = color_map[bbox.label]
+        color = color_map[bbox.category]
         # Convert normalized coordinates to absolute coordinates
         abs_x1 = int(bbox.xyxyn[0] * width)
         abs_y1 = int(bbox.xyxyn[1] * height)
@@ -213,7 +213,7 @@ def plot_bb(
         draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=2)
 
         # Draw the text
-        draw.text((abs_x1 + 4, abs_y1 + 2), bbox.label, fill=color, font_size=16)
+        draw.text((abs_x1 + 4, abs_y1 + 2), bbox.category, fill=color, font_size=16)
 
     return img
 
@@ -222,10 +222,10 @@ def plot_bb(
 # Gemini
 
 
-@dataclass
+@dataclass(kw_only=True)
 class GeminiQueryConfig:
     prompt: str
-    classes: list[str]
+    categories: list[str]
     model: str = "gemini-2.5-flash"
     temperature: float | None = 0.0
     seed: int | None = 325
@@ -244,7 +244,7 @@ def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
     def _cvt_gemini(gbbox: dict[str, Any]) -> BBox:
         ymin, xmin, ymax, xmax = gbbox["box_2d"]
         xyxyn = (xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000)
-        return BBox(xyxyn=xyxyn, label=gbbox["label"])
+        return BBox(xyxyn=xyxyn, category=gbbox["label"])
 
     return [_cvt_gemini(_g) for _g in gemini_bboxes]
 
@@ -332,7 +332,7 @@ def gemini_detect_gfile(
 ) -> ImageResult:
     assert gfile.display_name is not None
     bbs = gemini_gen_bboxes(gfile, qcfg)
-    return ImageResult(gfile.display_name, bbs)
+    return ImageResult(file=gfile.display_name, bboxes=bbs)
 
 
 ##
