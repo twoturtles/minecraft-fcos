@@ -9,6 +9,7 @@ dependencies = [
     "google-genai>=1.47.0",
     "ipykernel>=7.0.1",
     "ipywidgets>=8.1.7",
+    "jupyter-bbox-widget>=0.6.0",
     "matplotlib>=3.10.7",
     "numpy>=2.3.3",
     "pandas>=2.3.3",
