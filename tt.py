@@ -1,5 +1,6 @@
 """utils"""
 
+import copy
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -11,6 +12,7 @@ import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
 from IPython.display import display  # type: ignore
+from jupyter_bbox_widget import BBoxWidget
 from PIL import Image, ImageDraw
 from tqdm import tqdm
 
@@ -63,7 +65,7 @@ class LogColorFormatter(logging.Formatter):
 @dataclass(kw_only=True)
 class BBox:
     category: str
-    xyxyn: tuple[float, float, float, float]
+    xyxyn: list[float]  # len 4
 
 
 @dataclass(kw_only=True)
@@ -98,6 +100,123 @@ class Dataset:
         with open(path, "r") as f:
             data = json.load(f)
         return cls.from_dict(data)
+
+    def copy(self) -> Self:
+        return copy.deepcopy(self)
+
+
+class BBoxEdit:
+    def __init__(self, dset: Dataset) -> None:
+        self.dset = dset.copy()
+
+        # Create the slider
+        self.w_slider = widgets.IntSlider(
+            value=0,
+            min=0,
+            max=len(self.dset.images) - 1,
+            step=1,
+            description="Index:",
+            continuous_update=False,
+        )
+
+        # Create buttons
+        self.w_back_button = widgets.Button(
+            description="Back", button_style="warning", icon="arrow-left"
+        )
+        self.w_submit_button = widgets.Button(
+            description="Submit", button_style="success", icon="check"
+        )
+        self.w_skip_button = widgets.Button(
+            description="Skip", button_style="warning", icon="arrow-right"
+        )
+
+        self.w_bbox = BBoxWidget(
+            image=str(self.dset.images[0].file),
+            classes=self.dset.categories,
+            colors=Colors().get_strs(),
+            hide_buttons=True,
+        )
+
+        self.w_out = widgets.Output(
+            layout={
+                "height": "200px",
+                "overflow": "auto",  # Enables scrollbar
+                "border": "1px solid black",
+            }
+        )
+
+        # Layout the widgets
+        self.w_button_box = widgets.HBox(
+            [self.w_back_button, self.w_submit_button, self.w_skip_button]
+        )
+        self.w_ui = widgets.VBox(
+            [
+                self.w_slider,
+                self.w_button_box,
+                self.w_bbox,
+                widgets.Label("Debug Output:"),
+                self.w_out,
+            ]
+        )
+
+        # Connect slider to observer
+        self.w_slider.observe(self._on_slider_change, names="value")
+
+        # Connect buttons to callbacks
+        self.w_back_button.on_click(self._on_back)
+        self.w_submit_button.on_click(self._on_submit)
+        self.w_skip_button.on_click(self._on_skip)
+
+        # Display
+        display(self.w_ui)
+
+    def _set_bbox(self, index: int) -> None:
+        self.w_bbox.image = str(self.dset.images[index].file)
+        display(self.dset.images)
+        self.w_bbox.bboxes = []
+
+    def _on_slider_change(self, change: dict[str, Any]) -> None:
+        new_index = change["new"]
+        with self.w_out:
+            print(f"Slider moved to index {new_index}")
+            print(change)
+        # Add any other logic you need when the slider moves
+        # (e.g., update display, load new image, etc.)
+        self._set_bbox(new_index)
+
+    # Define your callback functions
+    def _on_submit(self, button: widgets.Button) -> None:
+        # Your submit logic here
+        slider = self.w_slider
+        display(f"Submitted index {slider.value}")
+
+        # Move to next item
+        if slider.value < len(self.dset.images) - 1:
+            slider.value += 1
+        else:
+            display("Reached end of list")
+
+    def _on_back(self, button: widgets.Button) -> None:
+        # Your skip logic here
+        slider = self.w_slider
+        display(f"Back index {slider.value}")
+
+        # Move to next item
+        if slider.value > 0:
+            slider.value -= 1
+        else:
+            display("Reached beginning of list")
+
+    def _on_skip(self, button: widgets.Button) -> None:
+        # Your skip logic here
+        slider = self.w_slider
+        display(f"Skipped index {slider.value}")
+
+        # Move to next item
+        if slider.value < len(self.dset.images) - 1:
+            slider.value += 1
+        else:
+            display("Reached end of list")
 
 
 ##
@@ -193,7 +312,7 @@ def plot_bb(
         # Use labels to create categories set.
         categories = sorted(list(set([bbox.category for bbox in bboxes])))
 
-    colors = Colors.get()
+    colors = Colors().get_rgb()
     color_map = {categories[i]: colors[i] for i in range(len(categories))}
     for bbox in bboxes:
         color = color_map[bbox.category]
@@ -243,7 +362,7 @@ def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
 
     def _cvt_gemini(gbbox: dict[str, Any]) -> BBox:
         ymin, xmin, ymax, xmax = gbbox["box_2d"]
-        xyxyn = (xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000)
+        xyxyn = [xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000]
         return BBox(xyxyn=xyxyn, category=gbbox["label"])
 
     return [_cvt_gemini(_g) for _g in gemini_bboxes]
@@ -349,14 +468,19 @@ class Colors:
         category20c="3182bd6baed69ecae1c6dbefe6550dfd8d3cfdae6bfdd0a231a35474c476a1d99bc7e9c0756bb19e9ac8bcbddcdadaeb636363969696bdbdbdd9d9d9",
     )
 
-    @classmethod
-    def get(cls, scheme: str = "category20") -> tuple[tuple[int, int, int], ...]:
+    def get_rgb(self, scheme: str = "category20") -> list[tuple[int, int, int]]:
         """Get a color scheme as a tuple of RGB tuples."""
-        hex_string = cls.schemes[scheme]
-        # Split into 6-character chunks
-        hex_colors = [hex_string[i : i + 6] for i in range(0, len(hex_string), 6)]
         # Convert each hex color to RGB tuple
         rgb_colors: list[tuple[int, int, int]] = []
-        for h in hex_colors:
+        for h in self.hex_split(scheme):
             rgb_colors.append((int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)))
-        return tuple(rgb_colors)
+        return rgb_colors
+
+    def get_strs(self, scheme: str = "category20") -> list[str]:
+        hex_list = self.hex_split(scheme)
+        return [f"#{color}" for color in hex_list]
+
+    def hex_split(self, scheme: str):
+        # Split into 6-character chunks
+        hex_string = self.schemes[scheme]
+        return [hex_string[i : i + 6] for i in range(0, len(hex_string), 6)]
