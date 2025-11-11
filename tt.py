@@ -67,6 +67,40 @@ class BBox:
     category: str
     xyxyn: list[float]  # len 4
 
+    def to_bbox_widget(self, size: tuple[int, int]) -> dict[str, Any]:
+        # {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
+        coco = self.to_coco(size)
+        return {
+            "x": coco[0],
+            "y": coco[1],
+            "width": coco[2],
+            "height": coco[3],
+            "label": self.category,
+        }
+
+    def to_coco(self, size: tuple[int, int]) -> list[int]:
+        # size = [width, height]
+        # coco is [x, y, width, height] absolute
+        abs_x1, abs_y1, abs_x2, abs_y2 = self.to_abs(size)
+        return [abs_x1, abs_y1, abs_x2 - abs_x1, abs_y2 - abs_y1]
+
+    def to_abs(self, size: tuple[int, int]) -> list[int]:
+        """Convert normalized coords to absolute.
+        size is [width, height]"""
+        width, height = size
+        abs_x1 = int(self.xyxyn[0] * width)
+        abs_y1 = int(self.xyxyn[1] * height)
+        abs_x2 = int(self.xyxyn[2] * width)
+        abs_y2 = int(self.xyxyn[3] * height)
+
+        if abs_x1 > abs_x2:
+            abs_x1, abs_x2 = abs_x2, abs_x1
+
+        if abs_y1 > abs_y2:
+            abs_y1, abs_y2 = abs_y2, abs_y1
+
+        return [abs_x1, abs_y1, abs_x2, abs_y2]
+
 
 @dataclass(kw_only=True)
 class ImageResult:
@@ -131,19 +165,11 @@ class BBoxEdit:
         )
 
         self.w_bbox = BBoxWidget(
-            image=str(self.dset.images[0].file),
             classes=self.dset.categories,
             colors=Colors().get_strs(),
             hide_buttons=True,
         )
-
-        self.w_out = widgets.Output(
-            layout={
-                "height": "200px",
-                "overflow": "auto",  # Enables scrollbar
-                "border": "1px solid black",
-            }
-        )
+        self._set_bbox(0)
 
         # Layout the widgets
         self.w_button_box = widgets.HBox(
@@ -154,8 +180,6 @@ class BBoxEdit:
                 self.w_slider,
                 self.w_button_box,
                 self.w_bbox,
-                widgets.Label("Debug Output:"),
-                self.w_out,
             ]
         )
 
@@ -167,19 +191,17 @@ class BBoxEdit:
         self.w_submit_button.on_click(self._on_submit)
         self.w_skip_button.on_click(self._on_skip)
 
-        # Display
+    def display(self) -> None:
         display(self.w_ui)
 
     def _set_bbox(self, index: int) -> None:
-        self.w_bbox.image = str(self.dset.images[index].file)
-        display(self.dset.images)
-        self.w_bbox.bboxes = []
+        image_result = self.dset.images[index]
+        self.w_bbox.image = str(image_result.file)
+        size = Image.open(image_result.file).size  # XXX
+        self.w_bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
-        with self.w_out:
-            print(f"Slider moved to index {new_index}")
-            print(change)
         # Add any other logic you need when the slider moves
         # (e.g., update display, load new image, etc.)
         self._set_bbox(new_index)
@@ -191,32 +213,17 @@ class BBoxEdit:
         display(f"Submitted index {slider.value}")
 
         # Move to next item
-        if slider.value < len(self.dset.images) - 1:
-            slider.value += 1
-        else:
-            display("Reached end of list")
+        self._on_skip(button)
 
     def _on_back(self, button: widgets.Button) -> None:
-        # Your skip logic here
         slider = self.w_slider
-        display(f"Back index {slider.value}")
-
-        # Move to next item
         if slider.value > 0:
             slider.value -= 1
-        else:
-            display("Reached beginning of list")
 
     def _on_skip(self, button: widgets.Button) -> None:
-        # Your skip logic here
         slider = self.w_slider
-        display(f"Skipped index {slider.value}")
-
-        # Move to next item
         if slider.value < len(self.dset.images) - 1:
             slider.value += 1
-        else:
-            display("Reached end of list")
 
 
 ##
@@ -305,7 +312,6 @@ def plot_bb(
     Plot bounding boxes
     """
     img = img.copy()
-    width, height = img.size
     draw = ImageDraw.Draw(img)
 
     if categories is None:
@@ -316,22 +322,8 @@ def plot_bb(
     color_map = {categories[i]: colors[i] for i in range(len(categories))}
     for bbox in bboxes:
         color = color_map[bbox.category]
-        # Convert normalized coordinates to absolute coordinates
-        abs_x1 = int(bbox.xyxyn[0] * width)
-        abs_y1 = int(bbox.xyxyn[1] * height)
-        abs_x2 = int(bbox.xyxyn[2] * width)
-        abs_y2 = int(bbox.xyxyn[3] * height)
-
-        if abs_x1 > abs_x2:
-            abs_x1, abs_x2 = abs_x2, abs_x1
-
-        if abs_y1 > abs_y2:
-            abs_y1, abs_y2 = abs_y2, abs_y1
-
-        # Draw the bounding box
+        abs_x1, abs_y1, abs_x2, abs_y2 = bbox.to_abs(img.size)
         draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=2)
-
-        # Draw the text
         draw.text((abs_x1 + 4, abs_y1 + 2), bbox.category, fill=color, font_size=16)
 
     return img
