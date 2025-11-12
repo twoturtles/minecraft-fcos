@@ -5,6 +5,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Self, Sequence
 
 import dacite
@@ -189,12 +190,20 @@ class Dataset:
 
 
 class BBoxEdit:
-    def __init__(self, dset: Dataset) -> None:
-        self.dset = dset.copy()
+    def __init__(self, input: str | Path | Dataset) -> None:
+        if isinstance(input, Dataset):
+            self.file = None
+            self.dset = input.copy()
+        else:
+            self.file = Path(input)
+            self.dset = Dataset.load(self.file)
+
+        # Widget holder
+        self.w = SimpleNamespace()
 
         # Create the slider
         initial_index = 0
-        self.w_slider = widgets.IntSlider(
+        self.w.slider = widgets.IntSlider(
             value=initial_index,
             min=0,
             max=len(self.dset.images) - 1,
@@ -202,19 +211,32 @@ class BBoxEdit:
             description="Index:",
             continuous_update=False,
         )
+        # Connect slider to observer
+        self.w.slider.observe(self._on_slider_change, names="value")
 
         # Create buttons
-        self.w_back_button = widgets.Button(
+        self.w.back = widgets.Button(
             description="Back", button_style="warning", icon="arrow-left"
         )
-        self.w_submit_button = widgets.Button(
+        self.w.back.on_click(self._on_back)
+
+        self.w.submit = widgets.Button(
             description="Submit", button_style="success", icon="check"
         )
-        self.w_skip_button = widgets.Button(
+        self.w.submit.on_click(self._on_submit)
+
+        self.w.skip = widgets.Button(
             description="Skip", button_style="warning", icon="arrow-right"
         )
+        self.w.skip.on_click(self._on_skip)
 
-        self.w_bbox = BBoxWidget(
+        self.w.save = widgets.Button(
+            description="Save", button_style="danger", icon="save"
+        )
+        self.w.save.on_click(self._on_save)
+
+        # Create BBoxWidget
+        self.w.bbox = BBoxWidget(
             classes=self.dset.categories,
             colors=Colors().get_strs(),
             hide_buttons=True,
@@ -222,56 +244,51 @@ class BBoxEdit:
         self._set_bbox(initial_index)
 
         # Layout the widgets
-        self.w_button_box = widgets.HBox(
-            [self.w_back_button, self.w_submit_button, self.w_skip_button]
-        )
-        self.w_ui = widgets.VBox([self.w_slider, self.w_button_box, self.w_bbox])
-
-        # Connect slider to observer
-        self.w_slider.observe(self._on_slider_change, names="value")
-
-        # Connect buttons to callbacks
-        self.w_back_button.on_click(self._on_back)
-        self.w_submit_button.on_click(self._on_submit)
-        self.w_skip_button.on_click(self._on_skip)
+        self.w.button_box = widgets.HBox([self.w.back, self.w.submit, self.w.skip])
+        self.w.ui = widgets.VBox([self.w.slider, self.w.button_box, self.w.bbox])
 
     def display(self) -> None:
-        display(self.w_ui)
+        display(self.w.ui)
+
+    def save(self, path: str | Path | None = None) -> None:
+        if path is None:
+            path = self.file
+        assert path is not None
+        self.dset.save(path)
 
     # Callbacks
 
     def _set_bbox(self, index: int) -> None:
         """Update bbox widget to current slider index."""
         image_result = self.dset.images[index]
-        self.w_bbox.image = str(image_result.file)
+        self.w.bbox.image = str(image_result.file)
         size = Image.open(image_result.file).size  # XXX
-        self.w_bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
+        self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
         self._set_bbox(new_index)
 
     def _on_submit(self, button: widgets.Button) -> None:
-        index: int = self.w_slider.value
+        index: int = self.w.slider.value
         image_result = self.dset.images[index]
         size = Image.open(image_result.file).size  # XXX
-        display(f"DO SUBMIT {index}")
-        display(self.dset.images[index].bboxes)
-        display(self.w_bbox.bboxes)
-        new = [BBox.from_bbox_widget(bb, size) for bb in self.w_bbox.bboxes]
+        new = [BBox.from_bbox_widget(bb, size) for bb in self.w.bbox.bboxes]
         self.dset.images[index].bboxes = new
-        display(new)
         self._on_skip(button)
 
     def _on_back(self, button: widgets.Button) -> None:
-        slider = self.w_slider
+        slider = self.w.slider
         if slider.value > 0:
             slider.value -= 1
 
     def _on_skip(self, button: widgets.Button) -> None:
-        slider = self.w_slider
+        slider = self.w.slider
         if slider.value < len(self.dset.images) - 1:
             slider.value += 1
+
+    def _on_save(self, button: widgets.Button) -> None:
+        display("SAVE")
 
 
 ##
