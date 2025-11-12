@@ -231,7 +231,10 @@ class BBoxEdit:
         self.w.skip.on_click(self._on_skip)
 
         self.w.save = widgets.Button(
-            description="Save", button_style="danger", icon="save"
+            description="Save",
+            button_style="danger",
+            icon="save",
+            layout=widgets.Layout(margin="2px 2px 2px 20px"),
         )
         self.w.save.on_click(self._on_save)
 
@@ -244,7 +247,10 @@ class BBoxEdit:
         self._set_bbox(initial_index)
 
         # Layout the widgets
-        self.w.button_box = widgets.HBox([self.w.back, self.w.submit, self.w.skip])
+        buttons = [self.w.back, self.w.submit, self.w.skip]
+        if self.file is not None:  # Only allow save if file is set
+            buttons.append(self.w.save)
+        self.w.button_box = widgets.HBox(buttons)
         self.w.ui = widgets.VBox([self.w.slider, self.w.button_box, self.w.bbox])
 
     def display(self) -> None:
@@ -288,7 +294,7 @@ class BBoxEdit:
             slider.value += 1
 
     def _on_save(self, button: widgets.Button) -> None:
-        display("SAVE")
+        self.save()
 
 
 ##
