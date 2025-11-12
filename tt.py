@@ -95,19 +95,19 @@ def sort_xyxy[T: (int, float)](xyxy: list[T]) -> list[T]:
     return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
 
 
-def xyxyn_to_xyxy(xyxyn: list[float], size: tuple[int, int]) -> list[int]:
+def xyxyn_to_xyxy(xyxyn: list[float], size: tuple[int, int]) -> list[float]:
     """Convert normalized coords to absolute. size is (width, height)"""
     width, height = size
     xyxy = [
-        int(xyxyn[0] * width),
-        int(xyxyn[1] * height),
-        int(xyxyn[2] * width),
-        int(xyxyn[3] * height),
+        xyxyn[0] * width,
+        xyxyn[1] * height,
+        xyxyn[2] * width,
+        xyxyn[3] * height,
     ]
     return sort_xyxy(xyxy)
 
 
-def xyxy_to_xyxyn(xyxy: list[int], size: tuple[int, int]) -> list[float]:
+def xyxy_to_xyxyn(xyxy: list[float], size: tuple[int, int]) -> list[float]:
     width, height = size
     xyxyn = [
         xyxy[0] / width,
@@ -118,20 +118,20 @@ def xyxy_to_xyxyn(xyxy: list[int], size: tuple[int, int]) -> list[float]:
     return sort_xyxy(xyxyn)
 
 
-def xyxy_to_coco(xyxy: list[int]) -> list[int]:
+def xyxy_to_coco(xyxy: list[float]) -> list[float]:
     # coco is [x, y, width, height] absolute
     return [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
 
 
-def coco_to_xyxy(coco: list[int]) -> list[int]:
+def coco_to_xyxy(coco: list[float]) -> list[float]:
     return [coco[0], coco[1], coco[2] + coco[0], coco[3] + coco[1]]
 
 
-def xyxyn_to_coco(xyxyn: list[float], size: tuple[int, int]) -> list[int]:
+def xyxyn_to_coco(xyxyn: list[float], size: tuple[int, int]) -> list[float]:
     return xyxy_to_coco(xyxyn_to_xyxy(xyxyn, size))
 
 
-def coco_to_xyxyn(coco: list[int], size: tuple[int, int]) -> list[float]:
+def coco_to_xyxyn(coco: list[float], size: tuple[int, int]) -> list[float]:
     return xyxy_to_xyxyn(coco_to_xyxy(coco), size)
 
 
