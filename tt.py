@@ -86,13 +86,23 @@ class BBox:
             wbbox["width"],
             wbbox["height"],
         ]
-        return cls(category=wbbox["label"], xyxyn=coco_to_xyxyn(coco, size))
+        xyxyn = coco_to_xyxyn(coco, size)
+        # BBoxWidget can return values out of range if you overlap the edge with a box
+        xyxyn[0] = clamp(xyxyn[0], 0.0, 1.0)
+        xyxyn[1] = clamp(xyxyn[1], 0.0, 1.0)
+        xyxyn[2] = clamp(xyxyn[2], 0.0, 1.0)
+        xyxyn[3] = clamp(xyxyn[3], 0.0, 1.0)
+        return cls(category=wbbox["label"], xyxyn=xyxyn)
 
 
 def sort_xyxy[T: (int, float)](xyxy: list[T]) -> list[T]:
     """Sort corners to ensure x1 < x2 and y1 < y2."""
     x1, y1, x2, y2 = xyxy
     return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+
+
+def clamp[T: (int, float)](val: T, min_val: T, max_val: T) -> T:
+    return max(min_val, min(val, max_val))
 
 
 def xyxyn_to_xyxy(xyxyn: list[float], size: tuple[int, int]) -> list[float]:
@@ -252,6 +262,7 @@ class BBoxEdit:
         display(self.dset.images[index].bboxes)
         display(self.w_bbox.bboxes)
         new = [BBox.from_bbox_widget(bb, size) for bb in self.w_bbox.bboxes]
+        self.dset.images[index].bboxes = new
         display(new)
         self._on_skip(button)
 
