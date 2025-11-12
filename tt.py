@@ -12,7 +12,7 @@ import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
 from IPython.display import display  # type: ignore
-from jupyter_bbox_widget import BBoxWidget
+from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image, ImageDraw
 from tqdm import tqdm
 
@@ -69,7 +69,7 @@ class BBox:
 
     def to_bbox_widget(self, size: tuple[int, int]) -> dict[str, Any]:
         # {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
-        coco = self.to_coco(size)
+        coco = xyxyn_to_coco(self.xyxyn, size)
         return {
             "x": coco[0],
             "y": coco[1],
@@ -78,28 +78,61 @@ class BBox:
             "label": self.category,
         }
 
-    def to_coco(self, size: tuple[int, int]) -> list[int]:
-        # size = [width, height]
-        # coco is [x, y, width, height] absolute
-        abs_x1, abs_y1, abs_x2, abs_y2 = self.to_abs(size)
-        return [abs_x1, abs_y1, abs_x2 - abs_x1, abs_y2 - abs_y1]
+    @classmethod
+    def from_bbox_widget(cls, wbbox: dict[str, Any], size: tuple[int, int]) -> Self:
+        coco = [
+            wbbox["x"],
+            wbbox["y"],
+            wbbox["width"],
+            wbbox["height"],
+        ]
+        return cls(category=wbbox["label"], xyxyn=coco_to_xyxyn(coco, size))
 
-    def to_abs(self, size: tuple[int, int]) -> list[int]:
-        """Convert normalized coords to absolute.
-        size is [width, height]"""
-        width, height = size
-        abs_x1 = int(self.xyxyn[0] * width)
-        abs_y1 = int(self.xyxyn[1] * height)
-        abs_x2 = int(self.xyxyn[2] * width)
-        abs_y2 = int(self.xyxyn[3] * height)
 
-        if abs_x1 > abs_x2:
-            abs_x1, abs_x2 = abs_x2, abs_x1
+def sort_xyxy[T: (int, float)](xyxy: list[T]) -> list[T]:
+    """Sort corners to ensure x1 < x2 and y1 < y2."""
+    x1, y1, x2, y2 = xyxy
+    return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
 
-        if abs_y1 > abs_y2:
-            abs_y1, abs_y2 = abs_y2, abs_y1
 
-        return [abs_x1, abs_y1, abs_x2, abs_y2]
+def xyxyn_to_xyxy(xyxyn: list[float], size: tuple[int, int]) -> list[int]:
+    """Convert normalized coords to absolute. size is (width, height)"""
+    width, height = size
+    xyxy = [
+        int(xyxyn[0] * width),
+        int(xyxyn[1] * height),
+        int(xyxyn[2] * width),
+        int(xyxyn[3] * height),
+    ]
+    return sort_xyxy(xyxy)
+
+
+def xyxy_to_xyxyn(xyxy: list[int], size: tuple[int, int]) -> list[float]:
+    width, height = size
+    xyxyn = [
+        xyxy[0] / width,
+        xyxy[1] / height,
+        xyxy[2] / width,
+        xyxy[3] / height,
+    ]
+    return sort_xyxy(xyxyn)
+
+
+def xyxy_to_coco(xyxy: list[int]) -> list[int]:
+    # coco is [x, y, width, height] absolute
+    return [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
+
+
+def coco_to_xyxy(coco: list[int]) -> list[int]:
+    return [coco[0], coco[1], coco[2] + coco[0], coco[3] + coco[1]]
+
+
+def xyxyn_to_coco(xyxyn: list[float], size: tuple[int, int]) -> list[int]:
+    return xyxy_to_coco(xyxyn_to_xyxy(xyxyn, size))
+
+
+def coco_to_xyxyn(coco: list[int], size: tuple[int, int]) -> list[float]:
+    return xyxy_to_xyxyn(coco_to_xyxy(coco), size)
 
 
 @dataclass(kw_only=True)
@@ -139,13 +172,23 @@ class Dataset:
         return copy.deepcopy(self)
 
 
+# DEBUG_OUT = widgets.Output(
+#     layout={
+#         "height": "200px",
+#         "overflow": "auto",  # Enables scrollbar
+#         "border": "1px solid black",
+#     }
+# )
+
+
 class BBoxEdit:
     def __init__(self, dset: Dataset) -> None:
         self.dset = dset.copy()
 
         # Create the slider
+        initial_index = 0
         self.w_slider = widgets.IntSlider(
-            value=0,
+            value=initial_index,
             min=0,
             max=len(self.dset.images) - 1,
             step=1,
@@ -169,19 +212,13 @@ class BBoxEdit:
             colors=Colors().get_strs(),
             hide_buttons=True,
         )
-        self._set_bbox(0)
+        self._set_bbox(initial_index)
 
         # Layout the widgets
         self.w_button_box = widgets.HBox(
             [self.w_back_button, self.w_submit_button, self.w_skip_button]
         )
-        self.w_ui = widgets.VBox(
-            [
-                self.w_slider,
-                self.w_button_box,
-                self.w_bbox,
-            ]
-        )
+        self.w_ui = widgets.VBox([self.w_slider, self.w_button_box, self.w_bbox])
 
         # Connect slider to observer
         self.w_slider.observe(self._on_slider_change, names="value")
@@ -194,7 +231,10 @@ class BBoxEdit:
     def display(self) -> None:
         display(self.w_ui)
 
+    # Callbacks
+
     def _set_bbox(self, index: int) -> None:
+        """Update bbox widget to current slider index."""
         image_result = self.dset.images[index]
         self.w_bbox.image = str(image_result.file)
         size = Image.open(image_result.file).size  # XXX
@@ -202,17 +242,17 @@ class BBoxEdit:
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
-        # Add any other logic you need when the slider moves
-        # (e.g., update display, load new image, etc.)
         self._set_bbox(new_index)
 
-    # Define your callback functions
     def _on_submit(self, button: widgets.Button) -> None:
-        # Your submit logic here
-        slider = self.w_slider
-        display(f"Submitted index {slider.value}")
-
-        # Move to next item
+        index: int = self.w_slider.value
+        image_result = self.dset.images[index]
+        size = Image.open(image_result.file).size  # XXX
+        display(f"DO SUBMIT {index}")
+        display(self.dset.images[index].bboxes)
+        display(self.w_bbox.bboxes)
+        new = [BBox.from_bbox_widget(bb, size) for bb in self.w_bbox.bboxes]
+        display(new)
         self._on_skip(button)
 
     def _on_back(self, button: widgets.Button) -> None:
@@ -322,9 +362,9 @@ def plot_bb(
     color_map = {categories[i]: colors[i] for i in range(len(categories))}
     for bbox in bboxes:
         color = color_map[bbox.category]
-        abs_x1, abs_y1, abs_x2, abs_y2 = bbox.to_abs(img.size)
-        draw.rectangle(((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=2)
-        draw.text((abs_x1 + 4, abs_y1 + 2), bbox.category, fill=color, font_size=16)
+        xyxy = xyxyn_to_xyxy(bbox.xyxyn, img.size)
+        draw.rectangle(((xyxy[0], xyxy[1]), (xyxy[2], xyxy[3])), outline=color, width=2)
+        draw.text((xyxy[0] + 4, xyxy[1] + 2), bbox.category, fill=color, font_size=16)
 
     return img
 
