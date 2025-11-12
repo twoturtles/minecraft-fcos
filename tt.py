@@ -88,10 +88,7 @@ class BBox:
         ]
         xyxyn = coco_to_xyxyn(coco, size)
         # BBoxWidget can return values out of range if you overlap the edge with a box
-        xyxyn[0] = clamp(xyxyn[0], 0.0, 1.0)
-        xyxyn[1] = clamp(xyxyn[1], 0.0, 1.0)
-        xyxyn[2] = clamp(xyxyn[2], 0.0, 1.0)
-        xyxyn[3] = clamp(xyxyn[3], 0.0, 1.0)
+        xyxyn = [clamp(bb, 0.0, 1.0) for bb in xyxyn]
         return cls(category=wbbox["label"], xyxyn=xyxyn)
 
 
