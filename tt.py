@@ -3,7 +3,7 @@
 import copy
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Self, Sequence
@@ -12,7 +12,7 @@ import dacite
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
-from IPython.display import display  # type: ignore
+from IPython.display import display
 from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image, ImageDraw
 from tqdm import tqdm
@@ -164,7 +164,7 @@ class Dataset:
     def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
         return dacite.from_dict(data_class=cls, data=dataset_dict)
 
-    def save(self, path: str | Path):
+    def save(self, path: str | Path) -> None:
         path = Path(path)
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
@@ -254,7 +254,7 @@ class BBoxEdit:
         self.w.ui = widgets.VBox([self.w.slider, self.w.button_box, self.w.bbox])
 
     def display(self) -> None:
-        display(self.w.ui)
+        display(self.w.ui)  # type: ignore
 
     def save(self, path: str | Path | None = None) -> None:
         if path is None:
@@ -308,7 +308,7 @@ class ImageDirViewer:
         self.current_file = None
         self.current_index = 0
 
-    def view_image_cb(self, index: int):
+    def view_image_cb(self, index: int) -> None:
         self.current_index = index
         self.current_file = self.image_files[index]
 
@@ -317,7 +317,7 @@ class ImageDirViewer:
         print(f"index={index} file={self.current_file.name}")
         display(img)
 
-    def show_widget(self):
+    def show_widget(self) -> None:
         slider = widgets.IntSlider(
             value=0,
             min=0,
@@ -341,13 +341,13 @@ class InferViewer[T]:
         self.infer_list = infer_list
         self.categories = categories
 
-    def view_image_cb(self, index: int):
+    def view_image_cb(self, index: int) -> None:
         # Call the provided inference function
         result = self.infer_fn(self.infer_list[index])
         print(f"index={index} file={result.file}")
         display(result.plot_bb(categories=self.categories))
 
-    def show_widget(self):
+    def show_widget(self) -> None:
         slider = widgets.IntSlider(
             value=0,
             min=0,
@@ -406,29 +406,12 @@ def plot_bb(
 
 @dataclass(kw_only=True)
 class GeminiQueryConfig:
+    client: genai.Client = field(default_factory=genai.Client)
     prompt: str
     categories: list[str]
     model: str = "gemini-2.5-flash"
     temperature: float | None = 0.0
     seed: int | None = 325
-
-
-def gemini_to_bboxes(gemini_bboxes: list[dict[str, Any]]) -> list[BBox]:
-    """
-    The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.
-    [
-    {"box_2d": [386, 362, 513, 442], "label": "chicken"},
-    {"box_2d": [334, 375, 361, 412], "label": "cow"},
-    {"box_2d": [336, 290, 427, 396], "label": "pig"}
-    ]
-    """
-
-    def _cvt_gemini(gbbox: dict[str, Any]) -> BBox:
-        ymin, xmin, ymax, xmax = gbbox["box_2d"]
-        xyxyn = [xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000]
-        return BBox(xyxyn=xyxyn, category=gbbox["label"])
-
-    return [_cvt_gemini(_g) for _g in gemini_bboxes]
 
 
 class GeminiFileAPI:
@@ -441,7 +424,7 @@ class GeminiFileAPI:
         if sync:
             self.sync()
 
-    def sync(self):
+    def sync(self) -> None:
         self.gfiles = list(self.client.files.list())
 
     def upload_file(self, file: str | Path) -> genai.types.File:
@@ -452,9 +435,15 @@ class GeminiFileAPI:
         )
         return gfile
 
-    def upload_dir(self, dir_path: str | Path, glob_pat: str = "*.png"):
+    def upload_dir(
+        self,
+        dir_path: str | Path,
+        glob_pat: str = "*.png",
+        slice_obj: slice = slice(None),
+    ) -> None:
         dir_path = Path(dir_path).absolute()
         files = sorted(dir_path.glob(glob_pat))
+        files = files[slice_obj]
         for file in tqdm(files):
             self.upload_file(file)
 
@@ -469,52 +458,95 @@ class GeminiFileAPI:
         self.gfiles = []
 
 
-"""
-TODO:
-https://ai.google.dev/gemini-api/docs/batch-api
-The Gemini Batch API is designed to process large volumes of requests
-asynchronously at 50% of the standard cost. The target turnaround time is 24
-hours, but in majority of cases, it is much quicker.
-"""
-
-
-def gemini_gen_bboxes(
-    image: Image.Image | genai.types.File, qcfg: GeminiQueryConfig
+def gemini_to_bboxes(
+    gemini_bboxes: list[dict[str, Any]], categories: set[str] | None
 ) -> list[BBox]:
-    client = genai.Client()
+    """
+    Translate gemini format to BBox
+    The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.
+    [
+    {"box_2d": [386, 362, 513, 442], "label": "chicken"},
+    {"box_2d": [334, 375, 361, 412], "label": "cow"},
+    {"box_2d": [336, 290, 427, 396], "label": "pig"}
+    ]
+    """
+
+    bboxes: list[BBox] = []
+    for gbb in gemini_bboxes:
+        ymin, xmin, ymax, xmax = gbb["box_2d"]
+        xyxyn = [xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000]
+        cat = gbb["label"]
+        if categories is not None and cat not in categories:
+            LOG.warning(f"Invalid-Category {cat}")
+            continue
+        bboxes.append(BBox(xyxyn=xyxyn, category=gbb["label"]))
+
+    return bboxes
+
+
+def gemini_image_query(
+    image: Image.Image | genai.types.File, qcfg: GeminiQueryConfig
+) -> str:
+    """Pass image to gemini and return the text result"""
     config = genai.types.GenerateContentConfig(
         response_mime_type="application/json",
         thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
         temperature=qcfg.temperature,
         seed=qcfg.seed,
     )
-    response = client.models.generate_content(
+    response = qcfg.client.models.generate_content(
         model=qcfg.model, contents=[image, qcfg.prompt], config=config
     )
     assert response.text is not None
-    LOG.info(f"RESPONSE len={len(response.text)} {response.text}")
-    bounding_boxes: list[dict[str, Any]] = json.loads(response.text)
-    return gemini_to_bboxes(bounding_boxes)
+    LOG.info(f"Response len={len(response.text)} {response.text}")
+    return response.text
 
 
-def gemini_detect_multi(
+def gemini_detect_single(
+    image: Image.Image | genai.types.File, qcfg: GeminiQueryConfig
+) -> list[BBox]:
+    json_result: str = gemini_image_query(image, qcfg)
+    gbboxes: list[dict[str, Any]] = json.loads(json_result)
+    return gemini_to_bboxes(gbboxes, set(qcfg.categories))
+
+
+def gemini_detect_gfile(
+    image: Image.Image | genai.types.File, qcfg: GeminiQueryConfig, max_tries: int = 3
+) -> ImageResult:
+    """Pass single bbox query to gemini"""
+    from typing import cast
+
+    fname: str
+    if isinstance(image, Image.Image):
+        fname = image.filename  # type: ignore
+        assert isinstance(fname, str)
+    else:
+        assert image.display_name is not None
+        fname = image.display_name
+    bboxes: list[BBox] = []
+    for n in range(max_tries):
+        LOG.info(f"Query-Attempt-{n+1}")
+        json_result: str = gemini_image_query(image, qcfg)
+        try:
+            gbboxes: list[dict[str, Any]] = json.loads(json_result)
+        except json.JSONDecodeError as e:
+            LOG.warning(repr(e))
+            continue
+        bboxes = gemini_to_bboxes(gbboxes, set(qcfg.categories))
+        break
+    return ImageResult(file=fname, bboxes=bboxes)
+
+
+def gemini_detect_gfile_multi(
     gfiles: list[genai.types.File], qcfg: GeminiQueryConfig
 ) -> list[ImageResult]:
     results: list[ImageResult] = []
-    for i, gfile in enumerate(tqdm(gfiles)):
-        LOG.info(f"Detect {i+1}/{len(gfiles)} file={gfile.display_name}")
+    for i, gfile in enumerate(gfiles):
+        LOG.info(f"Detect index={i} len={len(gfiles)} file={gfile.display_name}")
         assert gfile.display_name is not None
         result = gemini_detect_gfile(gfile, qcfg)
         results.append(result)
     return results
-
-
-def gemini_detect_gfile(
-    gfile: genai.types.File, qcfg: GeminiQueryConfig
-) -> ImageResult:
-    assert gfile.display_name is not None
-    bbs = gemini_gen_bboxes(gfile, qcfg)
-    return ImageResult(file=gfile.display_name, bboxes=bbs)
 
 
 ##
@@ -543,7 +575,7 @@ class Colors:
         hex_list = self.hex_split(scheme)
         return [f"#{color}" for color in hex_list]
 
-    def hex_split(self, scheme: str):
+    def hex_split(self, scheme: str) -> list[str]:
         # Split into 6-character chunks
         hex_string = self.schemes[scheme]
         return [hex_string[i : i + 6] for i in range(0, len(hex_string), 6)]

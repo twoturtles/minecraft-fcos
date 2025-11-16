@@ -31,3 +31,16 @@ torchvision = [{index = "pytorch-cu130", marker = "sys_platform == 'linux'"}]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0.1",
+    "mypy>=1.13.0",
+    "ruff>=0.8.1",
+    "black>=24.10.0",
+    "pytest>=8.3.4",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=6.0.0",
+    "isort>=5.13.2",
+    "pip>=25.3",
+]
