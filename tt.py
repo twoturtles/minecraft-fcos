@@ -22,7 +22,6 @@ LOG = logging.getLogger(__name__)
 ##
 # Logging
 
-
 # _FMT = "[%(asctime)s] [%(threadName)s/%(levelname)s] (%(name)s) %(message)s"
 _FMT = "[%(asctime)s]:[%(levelname)s]:(%(name)s): %(message)s"
 _DATEFMT = "%H:%M:%S"
@@ -238,6 +237,8 @@ class BBoxEdit:
         )
         self.w.save.on_click(self._on_save)
 
+        self.w.text = widgets.Textarea()
+
         # Create BBoxWidget
         self.w.bbox = BBoxWidget(
             classes=self.dset.categories,
@@ -251,7 +252,9 @@ class BBoxEdit:
         if self.file is not None:  # Only allow save if file is set
             buttons.append(self.w.save)
         self.w.button_box = widgets.HBox(buttons)
-        self.w.ui = widgets.VBox([self.w.slider, self.w.button_box, self.w.bbox])
+        self.w.ui = widgets.VBox(
+            [self.w.slider, self.w.button_box, self.w.bbox, self.w.text]
+        )
 
     def display(self) -> None:
         display(self.w.ui)  # type: ignore
@@ -270,6 +273,9 @@ class BBoxEdit:
         self.w.bbox.image = str(image_result.file)
         size = Image.open(image_result.file).size  # XXX
         self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
+        import pprint
+
+        self.w.text.value = pprint.pformat(image_result)
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
