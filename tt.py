@@ -12,7 +12,7 @@ import dacite
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
-from ipydatagrid import DataGrid
+from ipydatagrid import DataGrid  # type: ignore
 from IPython.display import display
 from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image, ImageDraw
