@@ -12,6 +12,7 @@ import dacite
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from google import genai
+from ipydatagrid import DataGrid
 from IPython.display import display
 from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image, ImageDraw
@@ -59,7 +60,7 @@ class LogColorFormatter(logging.Formatter):
 
 
 ##
-# Image / BBox
+# BBox
 
 
 @dataclass(kw_only=True)
@@ -90,6 +91,55 @@ class BBox:
         # BBoxWidget can return values out of range if you overlap the edge with a box
         xyxyn = [clamp(bb, 0.0, 1.0) for bb in xyxyn]
         return cls(category=wbbox["label"], xyxyn=xyxyn)
+
+
+@dataclass(kw_only=True)
+class ImageResult:
+    file: str
+    bboxes: list[BBox]
+
+    def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
+        return plot_bb(Image.open(self.file), self.bboxes, categories)
+
+    def to_df(self, sort: bool = True) -> pd.DataFrame:
+        df = pd.DataFrame(
+            [[bbox.category, *bbox.xyxyn] for bbox in self.bboxes],
+            columns=["category", "x1", "y1", "x2", "y2"],
+        )
+        if sort:
+            df = df.sort_values("category").reset_index(drop=True)
+        return df
+
+
+@dataclass(kw_only=True)
+class Dataset:
+    categories: list[str]
+    images: list[ImageResult]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
+        return dacite.from_dict(data_class=cls, data=dataset_dict)
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load(cls, path: str | Path) -> Self:
+        path = Path(path)
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+    def copy(self) -> Self:
+        return copy.deepcopy(self)
+
+
+# BBox utils
 
 
 def sort_xyxy[T: (int, float)](xyxy: list[T]) -> list[T]:
@@ -142,41 +192,29 @@ def coco_to_xyxyn(coco: list[float], size: tuple[int, int]) -> list[float]:
     return xyxy_to_xyxyn(coco_to_xyxy(coco), size)
 
 
-@dataclass(kw_only=True)
-class ImageResult:
-    file: str
-    bboxes: list[BBox]
+def plot_bb(
+    img: Image.Image, bboxes: Sequence[BBox], categories: Sequence[str] | None
+) -> Image.Image:
+    """
+    Plot bounding boxes
+    Optionally pass categories for consistent colors
+    """
+    img = img.copy()
+    draw = ImageDraw.Draw(img)
 
-    def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
-        return plot_bb(Image.open(self.file), self.bboxes, categories)
+    if categories is None:
+        # Use labels to create categories set.
+        categories = sorted(list(set([bbox.category for bbox in bboxes])))
 
+    colors = Colors().get_rgb()
+    color_map = {categories[i]: colors[i] for i in range(len(categories))}
+    for bbox in bboxes:
+        color = color_map[bbox.category]
+        xyxy = xyxyn_to_xyxy(bbox.xyxyn, img.size)
+        draw.rectangle(((xyxy[0], xyxy[1]), (xyxy[2], xyxy[3])), outline=color, width=2)
+        draw.text((xyxy[0] + 4, xyxy[1] + 2), bbox.category, fill=color, font_size=16)
 
-@dataclass(kw_only=True)
-class Dataset:
-    categories: list[str]
-    images: list[ImageResult]
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
-        return dacite.from_dict(data_class=cls, data=dataset_dict)
-
-    def save(self, path: str | Path) -> None:
-        path = Path(path)
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
-
-    @classmethod
-    def load(cls, path: str | Path) -> Self:
-        path = Path(path)
-        with open(path, "r") as f:
-            data = json.load(f)
-        return cls.from_dict(data)
-
-    def copy(self) -> Self:
-        return copy.deepcopy(self)
+    return img
 
 
 # DEBUG_OUT = widgets.Output(
@@ -237,7 +275,16 @@ class BBoxEdit:
         )
         self.w.save.on_click(self._on_save)
 
-        self.w.text = widgets.Textarea()
+        self.w.grid = DataGrid(
+            pd.DataFrame(),
+            editable=True,
+            selection_mode="cell",
+            base_row_size=32,
+            base_column_header_size=32,
+            auto_fit_columns=True,
+            auto_fit_params={"area": "all"},
+        )
+        self.w.grid.on_cell_change(self._grid_change_cb)
 
         # Create BBoxWidget
         self.w.bbox = BBoxWidget(
@@ -253,7 +300,7 @@ class BBoxEdit:
             buttons.append(self.w.save)
         self.w.button_box = widgets.HBox(buttons)
         self.w.ui = widgets.VBox(
-            [self.w.slider, self.w.button_box, self.w.bbox, self.w.text]
+            [self.w.slider, self.w.button_box, self.w.bbox, self.w.grid]
         )
 
     def display(self) -> None:
@@ -273,9 +320,7 @@ class BBoxEdit:
         self.w.bbox.image = str(image_result.file)
         size = Image.open(image_result.file).size  # XXX
         self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
-        import pprint
-
-        self.w.text.value = pprint.pformat(image_result)
+        self.w.grid.data = image_result.to_df()
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
@@ -301,6 +346,10 @@ class BBoxEdit:
 
     def _on_save(self, button: widgets.Button) -> None:
         self.save()
+
+    def _grid_change_cb(self, cell: dict[str, Any]) -> None:
+        print("Cell change")
+        print(cell)
 
 
 ##
@@ -380,30 +429,6 @@ def bbs_to_df(bboxes: Sequence[BBox], sort: bool = True) -> pd.DataFrame:
     if sort:
         df = df.sort_values("category").reset_index(drop=True)
     return df
-
-
-def plot_bb(
-    img: Image.Image, bboxes: Sequence[BBox], categories: Sequence[str] | None
-) -> Image.Image:
-    """
-    Plot bounding boxes
-    """
-    img = img.copy()
-    draw = ImageDraw.Draw(img)
-
-    if categories is None:
-        # Use labels to create categories set.
-        categories = sorted(list(set([bbox.category for bbox in bboxes])))
-
-    colors = Colors().get_rgb()
-    color_map = {categories[i]: colors[i] for i in range(len(categories))}
-    for bbox in bboxes:
-        color = color_map[bbox.category]
-        xyxy = xyxyn_to_xyxy(bbox.xyxyn, img.size)
-        draw.rectangle(((xyxy[0], xyxy[1]), (xyxy[2], xyxy[3])), outline=color, width=2)
-        draw.text((xyxy[0] + 4, xyxy[1] + 2), bbox.category, fill=color, font_size=16)
-
-    return img
 
 
 ##
