@@ -282,15 +282,13 @@ class BBoxEdit:
             description="Zoom",
             button_style="info",
             icon="search-plus",
-            layout=widgets.Layout(width="100%"),
         )
         self.w.zoom.on_click(self._on_zoom)
 
         # Create zoomed image output widget
         self.w.zoom_output = widgets.Output(
             layout={
-                "height": "200px",
-                "overflow": "auto",  # Enables scrollbar
+                "height": "50px",
                 "border": "1px solid black",
             }
         )
@@ -327,10 +325,12 @@ class BBoxEdit:
         )
         self.w.content_box = widgets.HBox([self.w.bbox, self.w.right_panel])
 
-        self.w.ui = widgets.VBox([self.w.content_box, self.w.zoom_output, self.w.debug])
+        self.w.ui = widgets.VBox([self.w.content_box])
 
     def display(self) -> None:
         display(self.w.ui)  # type: ignore
+        display(self.w.zoom_output)
+        display(self.w.debug)
 
     def save(self, path: str | Path | None = None) -> None:
         if path is None:
@@ -388,6 +388,10 @@ class BBoxEdit:
         # with self.w.debug:
         self.w.zoom_output.clear_output()
         if self.zoom_level <= 1:
+            self.w.zoom_output.layout = {
+                "height": "50px",
+                "border": "1px solid black",
+            }
             return
 
         # Load and zoom the image
@@ -398,6 +402,12 @@ class BBoxEdit:
             (img.width * self.zoom_level, img.height * self.zoom_level),
             Image.Resampling.LANCZOS,
         )
+        self.w.zoom_output.layout = {
+            "height": f"{zoomed_img.height}px",
+            "width": f"{zoomed_img.width}px",
+            # "overflow": "auto",  # Enables scrollbar
+            "border": "1px solid black",
+        }
 
         with self.w.zoom_output:
             display(zoomed_img)
