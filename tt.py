@@ -219,6 +219,7 @@ def plot_bb(
 
 class BBoxEdit:
     def __init__(self, input: str | Path | Dataset) -> None:
+        # Load dataset
         if isinstance(input, Dataset):
             self.file = None
             self.dset = input.copy()
@@ -226,11 +227,20 @@ class BBoxEdit:
             self.file = Path(input)
             self.dset = Dataset.load(self.file)
 
-        # Widget holder
-        self.w = SimpleNamespace()
-
-        # Create the slider
         initial_index = 0
+        self.w = SimpleNamespace()
+        self.zoom_level: float = 1.0
+
+        # Create all widgets
+        self._create_index_slider(initial_index)
+        self._create_buttons()
+        self._create_grid()
+        self._create_zoom()
+        self._create_bbox(initial_index)
+        self._create_debug()
+        self._build_layout()
+
+    def _create_index_slider(self, initial_index: int) -> None:
         self.w.slider = widgets.IntSlider(
             description="Index:",
             value=initial_index,
@@ -239,10 +249,9 @@ class BBoxEdit:
             step=1,
             continuous_update=False,
         )
-        # Connect slider to observer
         self.w.slider.observe(self._on_slider_change, names="value")
 
-        # Create buttons
+    def _create_buttons(self) -> None:
         self.w.back = widgets.Button(
             description="Back", button_style="warning", icon="arrow-left"
         )
@@ -266,6 +275,7 @@ class BBoxEdit:
         )
         self.w.save.on_click(self._on_save)
 
+    def _create_grid(self) -> None:
         self.w.grid = DataGrid(
             pd.DataFrame(),
             editable=True,
@@ -280,8 +290,8 @@ class BBoxEdit:
         self.w.delete_row = widgets.Button(
             description="Delete Row", button_style="warning", icon="delete-left"
         )
-        # self.w.delete_row.on_click(self._on_delete_row)
 
+    def _create_zoom(self) -> None:
         self.w.zoom_slider = widgets.FloatSlider(
             description="Zoom",
             value=1.0,
@@ -292,36 +302,33 @@ class BBoxEdit:
         )
         self.w.zoom_slider.observe(self._on_zoom_slider_change, names="value")
         self.w.zoom_output = widgets.Output(
-            layout={
-                "height": "50px",
-                "border": "1px solid black",
-            }
+            layout={"height": "50px", "border": "1px solid black"}
         )
-        self.zoom_level: float = 1.0
 
-        # Create BBoxWidget
+    def _create_bbox(self, initial_index: int) -> None:
         self.w.bbox = BBoxWidget(
             classes=self.dset.categories,
             colors=Colors().get_strs(),
             hide_buttons=True,
         )
+        self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
         self._set_bbox(initial_index)
 
+    def _create_debug(self) -> None:
         self.w.debug = widgets.Output(
             layout={
                 "height": "200px",
-                "overflow": "auto",  # Enables scrollbar
+                "overflow": "auto",
                 "border": "1px solid black",
             }
         )
 
-        # Layout the widgets
+    def _build_layout(self) -> None:
         buttons = [self.w.back, self.w.submit, self.w.skip]
-        if self.file is not None:  # Only allow save if file is set
+        if self.file is not None:
             buttons.append(self.w.save)
-        self.w.button_box = widgets.HBox(buttons, layout={"margin": "0px 0px 50px 0px"})
 
-        self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
+        self.w.button_box = widgets.HBox(buttons, layout={"margin": "0px 0px 50px 0px"})
 
         self.w.top_right_panel = widgets.VBox(
             [self.w.slider, self.w.button_box, self.w.grid, self.w.delete_row],
@@ -329,14 +336,11 @@ class BBoxEdit:
         )
 
         self.w.right_panel = widgets.VBox(
-            [
-                self.w.top_right_panel,
-                self.w.zoom_slider,
-            ],
+            [self.w.top_right_panel, self.w.zoom_slider],
             layout=widgets.Layout(width="40%"),
         )
-        self.w.content_box = widgets.HBox([self.w.bbox, self.w.right_panel])
 
+        self.w.content_box = widgets.HBox([self.w.bbox, self.w.right_panel])
         self.w.ui = widgets.VBox([self.w.content_box])
 
     def display(self) -> None:
