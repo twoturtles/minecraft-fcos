@@ -232,11 +232,11 @@ class BBoxEdit:
         # Create the slider
         initial_index = 0
         self.w.slider = widgets.IntSlider(
+            description="Index:",
             value=initial_index,
             min=0,
             max=len(self.dset.images) - 1,
             step=1,
-            description="Index:",
             continuous_update=False,
         )
         # Connect slider to observer
@@ -274,25 +274,26 @@ class BBoxEdit:
             base_column_header_size=32,
             auto_fit_columns=True,
             auto_fit_params={"area": "all"},
+            layout={"height": "200px"},
         )
         self.w.grid.on_cell_change(self._grid_change_cb)
 
-        # Create zoom button
-        self.w.zoom = widgets.Button(
+        self.w.zoom_slider = widgets.FloatSlider(
             description="Zoom",
-            button_style="info",
-            icon="search-plus",
+            value=1.0,
+            min=1.0,
+            max=5.0,
+            step=0.5,
+            continuous_update=False,
         )
-        self.w.zoom.on_click(self._on_zoom)
-
-        # Create zoomed image output widget
+        self.w.zoom_slider.observe(self._on_zoom_slider_change, names="value")
         self.w.zoom_output = widgets.Output(
             layout={
                 "height": "50px",
                 "border": "1px solid black",
             }
         )
-        self.zoom_level = 1
+        self.zoom_level: float = 1.0
 
         # Create BBoxWidget
         self.w.bbox = BBoxWidget(
@@ -318,9 +319,13 @@ class BBoxEdit:
 
         self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
 
-        # Create a vertical box with button box, slider, grid and zoom button for the right side
         self.w.right_panel = widgets.VBox(
-            [self.w.slider, self.w.button_box, self.w.grid, self.w.zoom],
+            [
+                self.w.slider,
+                self.w.button_box,
+                self.w.grid,
+                self.w.zoom_slider,
+            ],
             layout=widgets.Layout(width="40%"),
         )
         self.w.content_box = widgets.HBox([self.w.bbox, self.w.right_panel])
@@ -330,7 +335,7 @@ class BBoxEdit:
     def display(self) -> None:
         display(self.w.ui)  # type: ignore
         display(self.w.zoom_output)
-        display(self.w.debug)
+        # display(self.w.debug)
 
     def save(self, path: str | Path | None = None) -> None:
         if path is None:
@@ -378,16 +383,15 @@ class BBoxEdit:
         print("Cell change")
         print(cell)
 
-    def _on_zoom(self, button: widgets.Button) -> None:
-        """Toggle zoom display."""
-        self.zoom_level = (self.zoom_level % 4) + 1
+    def _on_zoom_slider_change(self, change: dict[str, Any]) -> None:
+        self.zoom_level = change["new"]
         self._update_zoom()
 
     def _update_zoom(self) -> None:
         """Update the zoomed image display."""
         # with self.w.debug:
         self.w.zoom_output.clear_output()
-        if self.zoom_level <= 1:
+        if self.zoom_level <= 1.0:
             self.w.zoom_output.layout = {
                 "height": "50px",
                 "border": "1px solid black",
@@ -399,13 +403,12 @@ class BBoxEdit:
         image_result = self.dset.images[index]
         img = Image.open(image_result.file)
         zoomed_img = img.resize(
-            (img.width * self.zoom_level, img.height * self.zoom_level),
+            (int(img.width * self.zoom_level), int(img.height * self.zoom_level)),
             Image.Resampling.LANCZOS,
         )
         self.w.zoom_output.layout = {
             "height": f"{zoomed_img.height}px",
             "width": f"{zoomed_img.width}px",
-            # "overflow": "auto",  # Enables scrollbar
             "border": "1px solid black",
         }
 
