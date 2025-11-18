@@ -217,15 +217,6 @@ def plot_bb(
     return img
 
 
-# DEBUG_OUT = widgets.Output(
-#     layout={
-#         "height": "200px",
-#         "overflow": "auto",  # Enables scrollbar
-#         "border": "1px solid black",
-#     }
-# )
-
-
 class BBoxEdit:
     def __init__(self, input: str | Path | Dataset) -> None:
         if isinstance(input, Dataset):
@@ -278,13 +269,32 @@ class BBoxEdit:
         self.w.grid = DataGrid(
             pd.DataFrame(),
             editable=True,
-            selection_mode="cell",
+            selection_mode="row",
             base_row_size=32,
             base_column_header_size=32,
             auto_fit_columns=True,
             auto_fit_params={"area": "all"},
         )
         self.w.grid.on_cell_change(self._grid_change_cb)
+
+        # Create zoom button
+        self.w.zoom = widgets.Button(
+            description="Zoom",
+            button_style="info",
+            icon="search-plus",
+            layout=widgets.Layout(width="100%"),
+        )
+        self.w.zoom.on_click(self._on_zoom)
+
+        # Create zoomed image output widget
+        self.w.zoom_output = widgets.Output(
+            layout={
+                "height": "200px",
+                "overflow": "auto",  # Enables scrollbar
+                "border": "1px solid black",
+            }
+        )
+        self.zoom_level = 1
 
         # Create BBoxWidget
         self.w.bbox = BBoxWidget(
@@ -294,14 +304,30 @@ class BBoxEdit:
         )
         self._set_bbox(initial_index)
 
+        self.w.debug = widgets.Output(
+            layout={
+                "height": "200px",
+                "overflow": "auto",  # Enables scrollbar
+                "border": "1px solid black",
+            }
+        )
+
         # Layout the widgets
         buttons = [self.w.back, self.w.submit, self.w.skip]
         if self.file is not None:  # Only allow save if file is set
             buttons.append(self.w.save)
         self.w.button_box = widgets.HBox(buttons)
-        self.w.ui = widgets.VBox(
-            [self.w.slider, self.w.button_box, self.w.bbox, self.w.grid]
+
+        self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
+
+        # Create a vertical box with button box, slider, grid and zoom button for the right side
+        self.w.right_panel = widgets.VBox(
+            [self.w.slider, self.w.button_box, self.w.grid, self.w.zoom],
+            layout=widgets.Layout(width="40%"),
         )
+        self.w.content_box = widgets.HBox([self.w.bbox, self.w.right_panel])
+
+        self.w.ui = widgets.VBox([self.w.content_box, self.w.zoom_output, self.w.debug])
 
     def display(self) -> None:
         display(self.w.ui)  # type: ignore
@@ -321,6 +347,7 @@ class BBoxEdit:
         size = Image.open(image_result.file).size  # XXX
         self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
         self.w.grid.data = image_result.to_df()
+        self._update_zoom()
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
@@ -350,6 +377,30 @@ class BBoxEdit:
     def _grid_change_cb(self, cell: dict[str, Any]) -> None:
         print("Cell change")
         print(cell)
+
+    def _on_zoom(self, button: widgets.Button) -> None:
+        """Toggle zoom display."""
+        self.zoom_level = (self.zoom_level % 4) + 1
+        self._update_zoom()
+
+    def _update_zoom(self) -> None:
+        """Update the zoomed image display."""
+        # with self.w.debug:
+        self.w.zoom_output.clear_output()
+        if self.zoom_level <= 1:
+            return
+
+        # Load and zoom the image
+        index = self.w.slider.value
+        image_result = self.dset.images[index]
+        img = Image.open(image_result.file)
+        zoomed_img = img.resize(
+            (img.width * self.zoom_level, img.height * self.zoom_level),
+            Image.Resampling.LANCZOS,
+        )
+
+        with self.w.zoom_output:
+            display(zoomed_img)
 
 
 ##
