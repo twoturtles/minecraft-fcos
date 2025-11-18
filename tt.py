@@ -274,9 +274,13 @@ class BBoxEdit:
             base_column_header_size=32,
             auto_fit_columns=True,
             auto_fit_params={"area": "all"},
-            layout={"height": "200px"},
+            layout={"height": "100px"},
         )
         self.w.grid.on_cell_change(self._grid_change_cb)
+        self.w.delete_row = widgets.Button(
+            description="Delete Row", button_style="warning", icon="delete-left"
+        )
+        # self.w.delete_row.on_click(self._on_delete_row)
 
         self.w.zoom_slider = widgets.FloatSlider(
             description="Zoom",
@@ -315,15 +319,18 @@ class BBoxEdit:
         buttons = [self.w.back, self.w.submit, self.w.skip]
         if self.file is not None:  # Only allow save if file is set
             buttons.append(self.w.save)
-        self.w.button_box = widgets.HBox(buttons)
+        self.w.button_box = widgets.HBox(buttons, layout={"margin": "0px 0px 50px 0px"})
 
         self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
 
+        self.w.top_right_panel = widgets.VBox(
+            [self.w.slider, self.w.button_box, self.w.grid, self.w.delete_row],
+            layout={"height": "90%"},
+        )
+
         self.w.right_panel = widgets.VBox(
             [
-                self.w.slider,
-                self.w.button_box,
-                self.w.grid,
+                self.w.top_right_panel,
                 self.w.zoom_slider,
             ],
             layout=widgets.Layout(width="40%"),
