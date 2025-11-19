@@ -1,3 +1,5 @@
+"""BBox Editing"""
+
 import logging
 from pathlib import Path
 from types import SimpleNamespace
