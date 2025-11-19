@@ -30,7 +30,7 @@ def debug(height: int = 250) -> widgets.Output:
     """
     out = widgets.Output(
         layout={
-            "height": f"{height}px",
+            # "height": f"{height}px",
             "overflow": "auto",
             "border": "1px solid black",
         }
@@ -40,7 +40,7 @@ def debug(height: int = 250) -> widgets.Output:
 
 
 class BBoxEdit:
-    def __init__(self, input: str | Path | bb.Dataset) -> None:
+    def __init__(self, input: str | Path | bb.Dataset, debug_output: widgets.Output | None = None) -> None:
         # Load dataset
         if isinstance(input, bb.Dataset):
             self.file = None
@@ -51,30 +51,50 @@ class BBoxEdit:
 
         initial_index = 0
         self.w = SimpleNamespace()
+        self.debug_output = debug_output
 
         # Create all widgets
-        self.w.bbox = self._create_bbox_panel()
+        bbox = self._create_bbox_panel()
         right_panel = self._create_right_panel(initial_index)
         zoom_section = self._create_zoom_section()
 
         content_box = widgets.HBox(
-            [self.w.bbox, right_panel],
+            [bbox, right_panel],
             layout={"margin": "0px 0px 20px 0px", "border": "1px solid black"},
         )
         self.w.ui = widgets.VBox([content_box, zoom_section])
 
         self._set_bbox(initial_index)
 
+    def display(self) -> None:
+        display(self.w.ui)  # type: ignore[no-untyped-call]
+
+    def save(self, path: str | Path | None = None) -> None:
+        if path is None:
+            path = self.file
+        assert path is not None
+        self.dset.save(path)
+
     ##
-    # BBox Edit - left panel
+    # BBox edit - left panel
+
     def _create_bbox_panel(self) -> widgets.Box:
-        bbox = BBoxWidget(
+        self.w.bbox = BBoxWidget(
             classes=self.dset.categories,
             colors=tt.Colors().get_strs(),
             hide_buttons=True,
             layout={"width": "60%"},
         )
-        return bbox
+        return self.w.bbox
+
+    def _set_bbox(self, index: int) -> None:
+        """Update bbox widget to selected index."""
+        image_result = self.dset.images[index]
+        self.w.bbox.image = str(image_result.file)
+        size = Image.open(image_result.file).size  # XXX
+        self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
+        self.w.grid.data = image_result.to_df()
+        self._update_zoom()
 
     ##
     # Right panel
@@ -83,6 +103,8 @@ class BBoxEdit:
         control_section = self._create_control_section(initial_index)
         grid_section = self._create_grid_section()
         return widgets.VBox([control_section, grid_section], layout={"width": "40%"})
+
+    ## Control section
 
     def _create_control_section(self, initial_index: int) -> widgets.Box:
         # Index Slider
@@ -107,6 +129,12 @@ class BBoxEdit:
             },
         )
         return control_section
+
+    def _on_slider_change(self, change: dict[str, Any]) -> None:
+        new_index = change["new"]
+        self._set_bbox(new_index)
+
+    ## Control Buttons
 
     def _create_buttons(self) -> widgets.Box:
         back = widgets.Button(
@@ -137,7 +165,31 @@ class BBoxEdit:
             buttons.append(save)
         return widgets.HBox(buttons)
 
+    def _on_submit(self, button: widgets.Button) -> None:
+        index: int = self.w.index_slider.value
+        image_result = self.dset.images[index]
+        size = Image.open(image_result.file).size  # XXX
+        new = [bb.BBox.from_bbox_widget(bb, size) for bb in self.w.bbox.bboxes]
+        self.dset.images[index].bboxes = new
+        self._on_skip(button)
+
+    def _on_back(self, button: widgets.Button) -> None:
+        slider = self.w.index_slider
+        if slider.value > 0:
+            slider.value -= 1
+
+    def _on_skip(self, button: widgets.Button) -> None:
+        slider = self.w.index_slider
+        if slider.value < len(self.dset.images) - 1:
+            slider.value += 1
+
+    def _on_save(self, button: widgets.Button) -> None:
+        self.save()
+
+    ## Grid
+
     def _create_grid_section(self) -> widgets.Box:
+        # XXX Turn off edit?
         self.w.grid = DataGrid(
             pd.DataFrame(),
             editable=True,
@@ -149,13 +201,32 @@ class BBoxEdit:
             layout={"height": "150px"},
         )
         self.w.grid.on_cell_change(self._grid_change_cb)
-        self.w.delete_row = widgets.Button(
+        delete_row = widgets.Button(
             description="Delete Row", button_style="warning", icon="delete-left"
         )
+        delete_row.on_click(self._delete_row_cb)
         return widgets.VBox(
-            [self.w.grid, self.w.delete_row],
+            [self.w.grid, delete_row],
             layout={"border": "1px solid black", "padding": "10px"},
         )
+
+    def _grid_change_cb(self, cell: dict[str, Any]) -> None:
+        if self.debug_output:
+            with self.debug_output:
+                print("Cell change")
+                print(cell)
+        else:
+            print("Cell change")
+            print(cell)
+
+    def _delete_row_cb(self, button: widgets.Button) -> None:
+        if self.debug_output:
+            with self.debug_output:
+                print("DELETE")
+                print(self.w.grid.selections)
+        else:
+            print("DELETE")
+            print(self.w.grid.selections)
 
     ##
     # Zoom panel
@@ -192,53 +263,9 @@ class BBoxEdit:
             },
         )
 
-    def display(self) -> None:
-        display(self.w.ui)  # type: ignore[no-untyped-call]
-
-        # display(self.w.debug)
-
-    def save(self, path: str | Path | None = None) -> None:
-        if path is None:
-            path = self.file
-        assert path is not None
-        self.dset.save(path)
-
-    ##
-    # Callbacks
-
-    def _set_bbox(self, index: int) -> None:
-        """Update bbox widget to current slider index."""
-        image_result = self.dset.images[index]
-        self.w.bbox.image = str(image_result.file)
-        size = Image.open(image_result.file).size  # XXX
-        self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
-        self.w.grid.data = image_result.to_df()
+    def _on_zoom_slider_change(self, change: dict[str, Any]) -> None:
+        self.zoom_level = change["new"]
         self._update_zoom()
-
-    def _on_slider_change(self, change: dict[str, Any]) -> None:
-        new_index = change["new"]
-        self._set_bbox(new_index)
-
-    def _on_submit(self, button: widgets.Button) -> None:
-        index: int = self.w.index_slider.value
-        image_result = self.dset.images[index]
-        size = Image.open(image_result.file).size  # XXX
-        new = [bb.BBox.from_bbox_widget(bb, size) for bb in self.w.bbox.bboxes]
-        self.dset.images[index].bboxes = new
-        self._on_skip(button)
-
-    def _on_back(self, button: widgets.Button) -> None:
-        slider = self.w.index_slider
-        if slider.value > 0:
-            slider.value -= 1
-
-    def _on_skip(self, button: widgets.Button) -> None:
-        slider = self.w.index_slider
-        if slider.value < len(self.dset.images) - 1:
-            slider.value += 1
-
-    def _on_save(self, button: widgets.Button) -> None:
-        self.save()
 
     def _on_zoom_toggle(self, button: widgets.Button) -> None:
         """Toggle zoom display on/off"""
@@ -246,17 +273,8 @@ class BBoxEdit:
         button.icon = "toggle-on" if self.zoom_enabled else "toggle-off"
         self._update_zoom()
 
-    def _grid_change_cb(self, cell: dict[str, Any]) -> None:
-        print("Cell change")
-        print(cell)
-
-    def _on_zoom_slider_change(self, change: dict[str, Any]) -> None:
-        self.zoom_level = change["new"]
-        self._update_zoom()
-
     def _update_zoom(self) -> None:
         """Update the zoomed image display."""
-        # with self.w.debug:
         self.w.zoom_output.clear_output()
         if not self.zoom_enabled:
             self.w.zoom_output.layout = {
