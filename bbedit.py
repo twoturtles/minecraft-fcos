@@ -161,19 +161,31 @@ class BBoxEdit:
     # Zoom panel
 
     def _create_zoom_section(self) -> widgets.Box:
-        self.zoom_level: float = 1.0
-        zoom_slider = widgets.FloatSlider(
+        self.zoom_level: float = 2.0
+        self.zoom_enabled: bool = False
+
+        self.w.zoom_toggle = widgets.Button(
             description="Zoom",
-            value=1.0,
-            min=1.0,
+            button_style="info",
+            icon="toggle-off",
+        )
+        self.w.zoom_toggle.on_click(self._on_zoom_toggle)
+
+        zoom_slider = widgets.FloatSlider(
+            description="Level",
+            value=self.zoom_level,
+            min=2.0,
             max=5.0,
             step=0.5,
             continuous_update=False,
         )
         zoom_slider.observe(self._on_zoom_slider_change, names="value")
+
+        zoom_controls = widgets.HBox([self.w.zoom_toggle, zoom_slider])
+
         self.w.zoom_output = widgets.Output()
         return widgets.VBox(
-            [zoom_slider, self.w.zoom_output],
+            [zoom_controls, self.w.zoom_output],
             layout={
                 "overflow": "auto",
                 "border": "1px solid black",
@@ -228,6 +240,12 @@ class BBoxEdit:
     def _on_save(self, button: widgets.Button) -> None:
         self.save()
 
+    def _on_zoom_toggle(self, button: widgets.Button) -> None:
+        """Toggle zoom display on/off"""
+        self.zoom_enabled = not self.zoom_enabled
+        button.icon = "toggle-on" if self.zoom_enabled else "toggle-off"
+        self._update_zoom()
+
     def _grid_change_cb(self, cell: dict[str, Any]) -> None:
         print("Cell change")
         print(cell)
@@ -240,7 +258,7 @@ class BBoxEdit:
         """Update the zoomed image display."""
         # with self.w.debug:
         self.w.zoom_output.clear_output()
-        if self.zoom_level <= 1.0:
+        if not self.zoom_enabled:
             self.w.zoom_output.layout = {
                 "height": "auto",
             }
