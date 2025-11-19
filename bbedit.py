@@ -22,6 +22,7 @@ def debug(height: int = 250) -> widgets.Output:
     # Cell 1
     debug = bbedit.debug()
     # Cell 2
+    debug.clear_output()
     with debug:
         ...
     """
