@@ -232,13 +232,28 @@ class BBoxEdit:
         self.zoom_level: float = 1.0
 
         # Create all widgets
-        self._create_index_slider(initial_index)
-        self._create_buttons()
-        self._create_grid()
+        self._create_control_section(initial_index)
+        self._create_bbox()
+        self._create_grid_section()
         self._create_zoom()
-        self._create_bbox(initial_index)
         self._create_debug()
         self._build_layout()
+
+        self._set_bbox(initial_index)
+
+    def _create_control_section(self, initial_index: int) -> None:
+        self._create_index_slider(initial_index)
+        self._create_buttons()
+        buttons = [self.w.back, self.w.submit, self.w.skip]
+        if self.file is not None:
+            buttons.append(self.w.save)
+
+        button_box = widgets.HBox(buttons, layout={"margin": "0px 0px 20px 0px"})
+
+        self.w.control_section = widgets.VBox(
+            [self.w.slider, button_box],
+            layout=widgets.Layout(border="1px solid black", padding="10px"),
+        )
 
     def _create_index_slider(self, initial_index: int) -> None:
         self.w.slider = widgets.IntSlider(
@@ -275,22 +290,6 @@ class BBoxEdit:
         )
         self.w.save.on_click(self._on_save)
 
-    def _create_grid(self) -> None:
-        self.w.grid = DataGrid(
-            pd.DataFrame(),
-            editable=True,
-            selection_mode="row",
-            base_row_size=32,
-            base_column_header_size=32,
-            auto_fit_columns=True,
-            auto_fit_params={"area": "all"},
-            layout={"height": "100px"},
-        )
-        self.w.grid.on_cell_change(self._grid_change_cb)
-        self.w.delete_row = widgets.Button(
-            description="Delete Row", button_style="warning", icon="delete-left"
-        )
-
     def _create_zoom(self) -> None:
         self.w.zoom_slider = widgets.FloatSlider(
             description="Zoom",
@@ -305,14 +304,13 @@ class BBoxEdit:
             layout={"height": "50px", "border": "1px solid black"}
         )
 
-    def _create_bbox(self, initial_index: int) -> None:
+    def _create_bbox(self) -> None:
         self.w.bbox = BBoxWidget(
             classes=self.dset.categories,
             colors=Colors().get_strs(),
             hide_buttons=True,
         )
         self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
-        self._set_bbox(initial_index)
 
     def _create_debug(self) -> None:
         self.w.debug = widgets.Output(
@@ -323,15 +321,29 @@ class BBoxEdit:
             }
         )
 
+    def _create_grid_section(self) -> None:
+        self.w.grid = DataGrid(
+            pd.DataFrame(),
+            editable=True,
+            selection_mode="row",
+            base_row_size=32,
+            base_column_header_size=32,
+            auto_fit_columns=True,
+            auto_fit_params={"area": "all"},
+            layout={"height": "100px"},
+        )
+        self.w.grid.on_cell_change(self._grid_change_cb)
+        self.w.delete_row = widgets.Button(
+            description="Delete Row", button_style="warning", icon="delete-left"
+        )
+        self.w.grid_section = widgets.VBox(
+            [self.w.grid, self.w.delete_row],
+            layout=widgets.Layout(border="1px solid black", padding="10px"),
+        )
+
     def _build_layout(self) -> None:
-        buttons = [self.w.back, self.w.submit, self.w.skip]
-        if self.file is not None:
-            buttons.append(self.w.save)
-
-        self.w.button_box = widgets.HBox(buttons, layout={"margin": "0px 0px 50px 0px"})
-
         self.w.top_right_panel = widgets.VBox(
-            [self.w.slider, self.w.button_box, self.w.grid, self.w.delete_row],
+            [self.w.control_section, self.w.grid_section],
             layout={"height": "90%"},
         )
 
@@ -345,7 +357,7 @@ class BBoxEdit:
 
     def display(self) -> None:
         display(self.w.ui)  # type: ignore
-        display(self.w.zoom_output)
+        display(self.w.zoom_output)  # type: ignore
         # display(self.w.debug)
 
     def save(self, path: str | Path | None = None) -> None:
