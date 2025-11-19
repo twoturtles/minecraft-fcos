@@ -18,29 +18,19 @@ import tt
 LOG = logging.getLogger(__name__)
 
 
-def debug(height: int = 250) -> widgets.Output:
-    """
-    Usage:
-    # Cell 1
-    debug = bbedit.debug()
-    # Cell 2
-    debug.clear_output()
-    with debug:
-        ...
-    """
-    out = widgets.Output(
-        layout={
-            # "height": f"{height}px",
-            "overflow": "auto",
-            "border": "1px solid black",
-        }
-    )
-    display(out)  # type: ignore[no-untyped-call]
-    return out
+# Usage: run `bbedit.DEBUG` in a cell by itself
+# `bedit.DEBUG.clear_output()` to clear
+DEBUG = widgets.Output(
+    layout={
+        # "height": f"{height}px",
+        "overflow": "auto",
+        "border": "1px solid black",
+    }
+)
 
 
 class BBoxEdit:
-    def __init__(self, input: str | Path | bb.Dataset, debug_output: widgets.Output | None = None) -> None:
+    def __init__(self, input: str | Path | bb.Dataset) -> None:
         # Load dataset
         if isinstance(input, bb.Dataset):
             self.file = None
@@ -51,7 +41,6 @@ class BBoxEdit:
 
         initial_index = 0
         self.w = SimpleNamespace()
-        self.debug_output = debug_output
 
         # Create all widgets
         bbox = self._create_bbox_panel()
@@ -211,20 +200,12 @@ class BBoxEdit:
         )
 
     def _grid_change_cb(self, cell: dict[str, Any]) -> None:
-        if self.debug_output:
-            with self.debug_output:
-                print("Cell change")
-                print(cell)
-        else:
+        with DEBUG:
             print("Cell change")
             print(cell)
 
     def _delete_row_cb(self, button: widgets.Button) -> None:
-        if self.debug_output:
-            with self.debug_output:
-                print("DELETE")
-                print(self.w.grid.selections)
-        else:
+        with DEBUG:
             print("DELETE")
             print(self.w.grid.selections)
 
