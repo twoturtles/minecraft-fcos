@@ -15,6 +15,27 @@ import tt
 
 LOG = logging.getLogger(__name__)
 
+
+def debug(height: int = 250) -> widgets.Output:
+    """
+    Usage:
+    # Cell 1
+    debug = bbedit.debug()
+    # Cell 2
+    with debug:
+        ...
+    """
+    out = widgets.Output(
+        layout={
+            "height": f"{height}px",
+            "overflow": "auto",
+            "border": "1px solid black",
+        }
+    )
+    display(out)  # type: ignore[no-untyped-call]
+    return out
+
+
 class BBoxEdit:
     def __init__(self, input: str | Path | bb.Dataset) -> None:
         # Load dataset
@@ -27,37 +48,40 @@ class BBoxEdit:
 
         initial_index = 0
         self.w = SimpleNamespace()
-        self.zoom_level: float = 1.0
 
         # Create all widgets
-        self._create_bbox_panel()
-        self._create_zoom_section()
-        self._create_debug()
-        self._build_layout()
+        self.w.bbox = self._create_bbox_panel()
+        right_panel = self._create_right_panel(initial_index)
+        zoom_section = self._create_zoom_section()
+
+        content_box = widgets.HBox(
+            [self.w.bbox, right_panel],
+            layout={"margin": "0px 0px 20px 0px", "border": "1px solid black"},
+        )
+        self.w.ui = widgets.VBox([content_box, zoom_section])
 
         self._set_bbox(initial_index)
 
     ##
     # BBox Edit - left panel
-    def _create_bbox_panel(self) -> None:
-        self.w.bbox = BBoxWidget(
+    def _create_bbox_panel(self) -> widgets.Box:
+        bbox = BBoxWidget(
             classes=self.dset.categories,
             colors=tt.Colors().get_strs(),
             hide_buttons=True,
+            layout={"width": "60%"},
         )
-        self.w.bbox.layout = widgets.Layout(width="60%", border="1px solid black")
+        return bbox
 
     ##
     # Right panel
 
-    def _create_right_panel(self, initial_index: int) -> None:
-        self._create_control_section(initial_index)
-        self._create_grid_section()
-        self.w.right_panel = widgets.VBox(
-            [self.w.control_section, self.w.grid_section], layout={"width": "40%"}
-        )
+    def _create_right_panel(self, initial_index: int) -> widgets.Box:
+        control_section = self._create_control_section(initial_index)
+        grid_section = self._create_grid_section()
+        return widgets.VBox([control_section, grid_section], layout={"width": "40%"})
 
-    def _create_control_section(self, initial_index: int) -> None:
+    def _create_control_section(self, initial_index: int) -> widgets.Box:
         # Index Slider
         self.w.index_slider = widgets.IntSlider(
             description="Index:",
@@ -68,46 +92,49 @@ class BBoxEdit:
             continuous_update=False,
         )
         self.w.index_slider.observe(self._on_slider_change, names="value")
-        
-        self._create_buttons()
-        buttons = [self.w.back, self.w.submit, self.w.skip]
-        if self.file is not None:
-            buttons.append(self.w.save)
 
-        button_box = widgets.HBox(buttons, layout={"margin": "0px 0px 20px 0px"})
+        button_box = self._create_buttons()
 
-        self.w.control_section = widgets.VBox(
+        control_section = widgets.VBox(
             [self.w.index_slider, button_box],
-            layout=widgets.Layout(border="1px solid black", padding="10px"),
+            layout={
+                "border": "1px solid black",
+                "padding": "10px",
+                "margin": "0px 0px 20px 0px",
+            },
         )
+        return control_section
 
-    def _create_index_slider(self, initial_index: int) -> None:
-
-    def _create_buttons(self) -> None:
-        self.w.back = widgets.Button(
+    def _create_buttons(self) -> widgets.Box:
+        back = widgets.Button(
             description="Back", button_style="warning", icon="arrow-left"
         )
-        self.w.back.on_click(self._on_back)
+        back.on_click(self._on_back)
 
-        self.w.submit = widgets.Button(
+        submit = widgets.Button(
             description="Submit", button_style="success", icon="check"
         )
-        self.w.submit.on_click(self._on_submit)
+        submit.on_click(self._on_submit)
 
-        self.w.skip = widgets.Button(
+        skip = widgets.Button(
             description="Skip", button_style="warning", icon="arrow-right"
         )
-        self.w.skip.on_click(self._on_skip)
+        skip.on_click(self._on_skip)
 
-        self.w.save = widgets.Button(
+        save = widgets.Button(
             description="Save",
             button_style="danger",
             icon="save",
-            layout=widgets.Layout(margin="2px 2px 2px 20px"),
+            layout={"margin": "2px 2px 2px 20px"},
         )
-        self.w.save.on_click(self._on_save)
+        save.on_click(self._on_save)
 
-    def _create_grid_section(self) -> None:
+        buttons = [back, submit, skip]
+        if self.file is not None:
+            buttons.append(save)
+        return widgets.HBox(buttons)
+
+    def _create_grid_section(self) -> widgets.Box:
         self.w.grid = DataGrid(
             pd.DataFrame(),
             editable=True,
@@ -116,22 +143,23 @@ class BBoxEdit:
             base_column_header_size=32,
             auto_fit_columns=True,
             auto_fit_params={"area": "all"},
-            layout={"height": "100px"},
+            layout={"height": "150px"},
         )
         self.w.grid.on_cell_change(self._grid_change_cb)
         self.w.delete_row = widgets.Button(
             description="Delete Row", button_style="warning", icon="delete-left"
         )
-        self.w.grid_section = widgets.VBox(
+        return widgets.VBox(
             [self.w.grid, self.w.delete_row],
-            layout=widgets.Layout(border="1px solid black", padding="10px"),
+            layout={"border": "1px solid black", "padding": "10px"},
         )
 
     ##
     # Zoom panel
 
-    def _create_zoom_section(self) -> None:
-        self.w.zoom_slider = widgets.FloatSlider(
+    def _create_zoom_section(self) -> widgets.Box:
+        self.zoom_level: float = 1.0
+        zoom_slider = widgets.FloatSlider(
             description="Zoom",
             value=1.0,
             min=1.0,
@@ -139,27 +167,19 @@ class BBoxEdit:
             step=0.5,
             continuous_update=False,
         )
-        self.w.zoom_slider.observe(self._on_zoom_slider_change, names="value")
-        self.w.zoom_output = widgets.Output(
-            layout={"height": "50px", "border": "1px solid black"}
-        )
-        self.w.zoom_section = widgets.VBox([self.w.zoom_slider, self.w.zoom_output])
-
-    def _create_debug(self) -> None:
-        self.w.debug = widgets.Output(
+        zoom_slider.observe(self._on_zoom_slider_change, names="value")
+        self.w.zoom_output = widgets.Output()
+        return widgets.VBox(
+            [zoom_slider, self.w.zoom_output],
             layout={
-                "height": "200px",
                 "overflow": "auto",
                 "border": "1px solid black",
-            }
+            },
         )
 
-    def _build_layout(self) -> None:
-        self.w.content_box = widgets.HBox([self.w.bbox, self.w.right_panel])
-        self.w.ui = widgets.VBox([self.w.content_box])
-
     def display(self) -> None:
-        display(self.w.ui)  # type: ignore
+        display(self.w.ui)  # type: ignore[no-untyped-call]
+
         # display(self.w.debug)
 
     def save(self, path: str | Path | None = None) -> None:
@@ -168,6 +188,7 @@ class BBoxEdit:
         assert path is not None
         self.dset.save(path)
 
+    ##
     # Callbacks
 
     def _set_bbox(self, index: int) -> None:
@@ -218,8 +239,7 @@ class BBoxEdit:
         self.w.zoom_output.clear_output()
         if self.zoom_level <= 1.0:
             self.w.zoom_output.layout = {
-                "height": "50px",
-                "border": "1px solid black",
+                "height": "auto",
             }
             return
 
@@ -238,5 +258,4 @@ class BBoxEdit:
         }
 
         with self.w.zoom_output:
-            display(zoomed_img)
-
+            display(zoomed_img)  # type: ignore[no-untyped-call]

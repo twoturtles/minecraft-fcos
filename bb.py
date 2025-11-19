@@ -189,7 +189,7 @@ class InferViewer[T]:
         # Call the provided inference function
         result = self.infer_fn(self.infer_list[index])
         print(f"index={index} file={result.file}")
-        display(result.plot_bb(categories=self.categories))
+        display(result.plot_bb(categories=self.categories))  # type: ignore[no-untyped-call]
 
     def show_widget(self) -> None:
         slider = widgets.IntSlider(
