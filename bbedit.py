@@ -83,7 +83,8 @@ class BBoxEdit:
         size = self.current_image.size
         self.w.bbox.image = str(image_result.file)
         self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
-        self.w.grid.data = image_result.to_df()
+        self.w.grid.data = image_result.to_df(sort=False)
+        self._grid_update_height()
         self._update_zoom()
 
     def _set_ui_from_index(self, index: int) -> None:
@@ -119,13 +120,11 @@ class BBoxEdit:
         self.updating_selection = True
         try:
             new_ix = change["new"]
-            with DEBUG:
-                print(f"BBOX CALLBACK new_ix={new_ix}")
-                if new_ix == -1:
-                    self.w.grid.clear_selection()
-                else:
-                    # In row selection mode, only need to select a single column in the row.
-                    self.w.grid.select(row1=new_ix, column1=0, clear_mode="all")
+            if new_ix == -1:
+                self.w.grid.clear_selection()
+            else:
+                # In row selection mode, only need to select a single column in the row.
+                self.w.grid.select(row1=new_ix, column1=0, clear_mode="all")
         finally:
             self.updating_selection = False
 
@@ -222,7 +221,6 @@ class BBoxEdit:
     ## Grid
 
     def _create_grid_section(self) -> widgets.Box:
-        # XXX Turn off edit?
         self.w.grid = DataGrid(
             pd.DataFrame(),
             selection_mode="row",
@@ -230,9 +228,9 @@ class BBoxEdit:
             base_column_header_size=32,
             auto_fit_columns=True,
             auto_fit_params={"area": "all"},
-            layout={"height": "150px"},
+            layout={"height": "100px"},
         )
-        self.w.grid.observe(self._grid_selection_change, "selections")
+        self.w.grid.observe(self._grid_selections_change, "selections")
 
         delete_row = widgets.Button(
             description="Delete Row", button_style="warning", icon="delete-left"
@@ -243,20 +241,18 @@ class BBoxEdit:
             layout={"border": "1px solid black", "padding": "10px"},
         )
 
-    def _grid_selection_change(self, change: dict[str, Any]) -> None:
+    def _grid_selections_change(self, change: dict[str, Any]) -> None:
         # See also _bbox_selection_change_cb
         if self.updating_selection:
             return
         self.updating_selection = True
         try:
             rows = set([cell["r"] for cell in self.w.grid.selected_cells])
-            with DEBUG:
-                print(f"GRID CALLBACK rows={rows}")
-                if len(rows) == 1:
-                    self.w.bbox.selected_index = rows.pop()
-                else:
-                    # 0 or >1 rows selected. Set bbox to no selection
-                    self.w.bbox.selected_index = -1
+            if len(rows) == 1:
+                self.w.bbox.selected_index = rows.pop()
+            else:
+                # 0 or >1 rows selected. Set bbox to no selection
+                self.w.bbox.selected_index = -1
         finally:
             self.updating_selection = False
 
@@ -268,6 +264,12 @@ class BBoxEdit:
             new_df = self.w.grid.data.drop(list(rows))
             new_ir = bb.ImageResult.from_df(new_df, self.w.bbox.image)
             self._set_ui_from_ir(new_ir)
+
+    def _grid_update_height(self) -> None:
+        num_rows = len(self.w.grid.data)
+        row_height = self.w.grid.base_row_size
+        height = (num_rows + 1) * row_height + 10  # header + rows + extra
+        self.w.grid.layout = {"height": f"{height}px"}
 
     ##
     # Zoom panel
