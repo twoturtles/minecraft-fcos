@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, TypeAlias
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
@@ -18,8 +18,11 @@ import tt
 LOG = logging.getLogger(__name__)
 
 
-# Usage: run `bbedit.DEBUG` in a cell by itself
-# `bedit.DEBUG.clear_output()` to clear
+"""
+Usage in cell:
+bedit.DEBUG.clear_output()
+bbedit.DEBUG
+"""
 DEBUG = widgets.Output(
     layout={
         # "height": f"{height}px",
@@ -27,6 +30,10 @@ DEBUG = widgets.Output(
         "border": "1px solid black",
     }
 )
+
+
+# BBoxEdit format: list of {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
+BBeBB = dict[str, Any]  # BBoxEdit BBox
 
 
 class BBoxEdit:
@@ -41,6 +48,7 @@ class BBoxEdit:
 
         initial_index = 0
         self.w = SimpleNamespace()
+        self.current_image = Image.Image()
 
         # Create all widgets
         bbox = self._create_bbox_panel()
@@ -53,7 +61,7 @@ class BBoxEdit:
         )
         self.w.ui = widgets.VBox([content_box, zoom_section])
 
-        self._set_bbox(initial_index)
+        self._set_ui_from_index(initial_index)
 
     def display(self) -> None:
         display(self.w.ui)  # type: ignore[no-untyped-call]
@@ -63,6 +71,20 @@ class BBoxEdit:
             path = self.file
         assert path is not None
         self.dset.save(path)
+
+    def _set_ui_from_ir(self, image_result: bb.ImageResult) -> None:
+        """Update UI from passed ImageResult"""
+        self.current_image = Image.open(image_result.file)
+        size = self.current_image.size
+        self.w.bbox.image = str(image_result.file)
+        self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
+        self.w.grid.data = image_result.to_df()
+        self._update_zoom()
+
+    def _set_ui_from_index(self, index: int) -> None:
+        """Update bbox widget to selected index."""
+        image_result = self.dset.images[index]
+        self._set_ui_from_ir(image_result)
 
     ##
     # BBox edit - left panel
@@ -74,16 +96,20 @@ class BBoxEdit:
             hide_buttons=True,
             layout={"width": "60%"},
         )
+        self.w.bbox.observe(self._bbox_change_cb, names=["bboxes"])
+        self.w.bbox.observe(self._bbox_sel_change_cb, names=["selected_index"])
         return self.w.bbox
 
-    def _set_bbox(self, index: int) -> None:
-        """Update bbox widget to selected index."""
-        image_result = self.dset.images[index]
-        self.w.bbox.image = str(image_result.file)
-        size = Image.open(image_result.file).size  # XXX
-        self.w.bbox.bboxes = [bbox.to_bbox_widget(size) for bbox in image_result.bboxes]
-        self.w.grid.data = image_result.to_df()
-        self._update_zoom()
+    def _bbox_change_cb(self, change: dict[str, Any]) -> None:
+        new_bbebb_list: list[BBeBB] = change["new"]
+        # update grid with new bboxes (see also _delete_row_cb)
+        new_bb_list = from_bbox_widget(new_bbebb_list, self.current_image.size)
+        new_ir = bb.ImageResult(file=self.w.bbox.image, bboxes=new_bb_list)
+        self._set_ui_from_ir(new_ir)
+
+    def _bbox_sel_change_cb(self, change: dict[str, Any]) -> None:
+        new_ix = change["new"]
+        # Update grid with new selection (also reverse)
 
     ##
     # Right panel
@@ -121,7 +147,7 @@ class BBoxEdit:
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
-        self._set_bbox(new_index)
+        self._set_ui_from_index(new_index)
 
     ## Control Buttons
 
@@ -156,10 +182,10 @@ class BBoxEdit:
 
     def _on_submit(self, button: widgets.Button) -> None:
         index: int = self.w.index_slider.value
-        image_result = self.dset.images[index]
-        size = Image.open(image_result.file).size  # XXX
-        new = [bb.BBox.from_bbox_widget(bb, size) for bb in self.w.bbox.bboxes]
-        self.dset.images[index].bboxes = new
+        size = self.current_image.size
+        # Update ImageResult from BBoxEdit
+        new_bbs = from_bbox_widget(self.w.bbox.bboxes, size)
+        self.dset.images[index].bboxes = new_bbs
         self._on_skip(button)
 
     def _on_back(self, button: widgets.Button) -> None:
@@ -181,7 +207,6 @@ class BBoxEdit:
         # XXX Turn off edit?
         self.w.grid = DataGrid(
             pd.DataFrame(),
-            editable=True,
             selection_mode="row",
             base_row_size=32,
             base_column_header_size=32,
@@ -189,7 +214,6 @@ class BBoxEdit:
             auto_fit_params={"area": "all"},
             layout={"height": "150px"},
         )
-        self.w.grid.on_cell_change(self._grid_change_cb)
         delete_row = widgets.Button(
             description="Delete Row", button_style="warning", icon="delete-left"
         )
@@ -199,15 +223,15 @@ class BBoxEdit:
             layout={"border": "1px solid black", "padding": "10px"},
         )
 
-    def _grid_change_cb(self, cell: dict[str, Any]) -> None:
-        with DEBUG:
-            print("Cell change")
-            print(cell)
-
     def _delete_row_cb(self, button: widgets.Button) -> None:
+        # See also _bbox_change_cb
         with DEBUG:
-            print("DELETE")
-            print(self.w.grid.selections)
+            # list of dicts {'r': 2, 'c': 1}
+            rows = set([cell["r"] for cell in self.w.grid.selected_cells])
+            if len(rows) > 0:
+                new_df = self.w.grid.data.drop(list(rows))
+                new_ir = bb.ImageResult.from_df(new_df, self.w.bbox.image)
+                self._set_ui_from_ir(new_ir)
 
     ##
     # Zoom panel
@@ -266,7 +290,7 @@ class BBoxEdit:
         # Load and zoom the image
         index = self.w.index_slider.value
         image_result = self.dset.images[index]
-        img = Image.open(image_result.file)
+        img = self.current_image
         zoomed_img = img.resize(
             (int(img.width * self.zoom_level), int(img.height * self.zoom_level)),
             Image.Resampling.LANCZOS,
@@ -279,3 +303,40 @@ class BBoxEdit:
 
         with self.w.zoom_output:
             display(zoomed_img)  # type: ignore[no-untyped-call]
+
+
+##
+# Helper functions
+
+
+def to_bbox_widget(bboxes: list[bb.BBox], size: tuple[int, int]) -> list[BBeBB]:
+    """list[BBox] to BBoxEdit format"""
+    # BBoxEdit format: list of {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
+    bbebb_list: list[BBeBB] = []
+    for bbox in bboxes:
+        coco = bb.xyxyn_to_coco(bbox.xyxyn, size)
+        bbebb = {
+            "x": coco[0],
+            "y": coco[1],
+            "width": coco[2],
+            "height": coco[3],
+            "label": bbox.category,
+        }
+        bbebb_list.append(bbebb)
+    return bbebb_list
+
+
+def from_bbox_widget(bbebb_list: list[BBeBB], size: tuple[int, int]) -> list[bb.BBox]:
+    bb_list: list[bb.BBox] = []
+    for bbebb in bbebb_list:
+        coco = [
+            bbebb["x"],
+            bbebb["y"],
+            bbebb["width"],
+            bbebb["height"],
+        ]
+        xyxyn = bb.coco_to_xyxyn(coco, size)
+        # BBoxEdit can return values out of range if you overlap the edge with a box
+        xyxyn = [bb.clamp(val, 0.0, 1.0) for val in xyxyn]
+        bb_list.append(bb.BBox(category=bbebb["label"], xyxyn=xyxyn))
+    return bb_list

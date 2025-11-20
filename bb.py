@@ -23,30 +23,6 @@ class BBox:
     category: str
     xyxyn: list[float]  # len 4
 
-    def to_bbox_widget(self, size: tuple[int, int]) -> dict[str, Any]:
-        # {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
-        coco = xyxyn_to_coco(self.xyxyn, size)
-        return {
-            "x": coco[0],
-            "y": coco[1],
-            "width": coco[2],
-            "height": coco[3],
-            "label": self.category,
-        }
-
-    @classmethod
-    def from_bbox_widget(cls, wbbox: dict[str, Any], size: tuple[int, int]) -> Self:
-        coco = [
-            wbbox["x"],
-            wbbox["y"],
-            wbbox["width"],
-            wbbox["height"],
-        ]
-        xyxyn = coco_to_xyxyn(coco, size)
-        # BBoxWidget can return values out of range if you overlap the edge with a box
-        xyxyn = [clamp(bb, 0.0, 1.0) for bb in xyxyn]
-        return cls(category=wbbox["label"], xyxyn=xyxyn)
-
 
 @dataclass(kw_only=True)
 class ImageResult:
@@ -64,6 +40,17 @@ class ImageResult:
         if sort:
             df = df.sort_values("category").reset_index(drop=True)
         return df
+
+    @classmethod
+    def from_df(cls, df: pd.DataFrame, file: str) -> Self:
+        """Overwrite the bboxes list with rows from df"""
+        bboxes: list[BBox] = []
+        for idx, row in df.iterrows():
+            BBox(
+                category=row["category"],
+                xyxyn=[row["x1"], row["y1"], row["x2"], row["y2"]],
+            )
+        return ImageResult(file=file, bboxes=bboxes)
 
 
 @dataclass(kw_only=True)
