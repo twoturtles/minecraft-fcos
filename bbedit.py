@@ -53,6 +53,7 @@ class BBoxEdit:
         initial_index = 0
         self.w = SimpleNamespace()
         self.current_image = Image.Image()
+        self.updating_selection = False  # Prevent cyclic updates
 
         # Create all widgets
         bbox = self._create_bbox_panel()
@@ -112,13 +113,21 @@ class BBoxEdit:
         self._set_ui_from_ir(new_ir)
 
     def _bbox_selection_change_cb(self, change: dict[str, Any]) -> None:
-        new_ix = change["new"]
-        # Update grid with new selection (also reverse)
-        if new_ix == -1:
-            self.w.grid.clear_selection()
-        else:
-            # In row selection mode, only need to select a single column in the row.
-            self.w.grid.select(row1=new_ix, column1=0, clear_mode="all")
+        # Update grid with new selection (see also _grid_selection_change)
+        if self.updating_selection:
+            return
+        self.updating_selection = True
+        try:
+            new_ix = change["new"]
+            with DEBUG:
+                print(f"BBOX CALLBACK new_ix={new_ix}")
+                if new_ix == -1:
+                    self.w.grid.clear_selection()
+                else:
+                    # In row selection mode, only need to select a single column in the row.
+                    self.w.grid.select(row1=new_ix, column1=0, clear_mode="all")
+        finally:
+            self.updating_selection = False
 
     ##
     # Right panel
@@ -236,12 +245,20 @@ class BBoxEdit:
 
     def _grid_selection_change(self, change: dict[str, Any]) -> None:
         # See also _bbox_selection_change_cb
-        rows = set([cell["r"] for cell in self.w.grid.selected_cells])
-        if len(rows) == 1:
-            self.w.bbox.selected_index = rows.pop()
-        else:
-            # 0 or >1 rows selected. Set bbox to no selection
-            self.w.bbox.selected_index = -1
+        if self.updating_selection:
+            return
+        self.updating_selection = True
+        try:
+            rows = set([cell["r"] for cell in self.w.grid.selected_cells])
+            with DEBUG:
+                print(f"GRID CALLBACK rows={rows}")
+                if len(rows) == 1:
+                    self.w.bbox.selected_index = rows.pop()
+                else:
+                    # 0 or >1 rows selected. Set bbox to no selection
+                    self.w.bbox.selected_index = -1
+        finally:
+            self.updating_selection = False
 
     def _delete_row_cb(self, button: widgets.Button) -> None:
         # See also _bbox_change_cb
