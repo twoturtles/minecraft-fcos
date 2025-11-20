@@ -22,6 +22,10 @@ LOG = logging.getLogger(__name__)
 Usage in cell:
 bedit.DEBUG.clear_output()
 bbedit.DEBUG
+
+Usage in widget:
+with DEBUG:
+    print...
 """
 DEBUG = widgets.Output(
     layout={
@@ -97,7 +101,7 @@ class BBoxEdit:
             layout={"width": "60%"},
         )
         self.w.bbox.observe(self._bbox_change_cb, names=["bboxes"])
-        self.w.bbox.observe(self._bbox_sel_change_cb, names=["selected_index"])
+        self.w.bbox.observe(self._bbox_selection_change_cb, names=["selected_index"])
         return self.w.bbox
 
     def _bbox_change_cb(self, change: dict[str, Any]) -> None:
@@ -107,9 +111,14 @@ class BBoxEdit:
         new_ir = bb.ImageResult(file=self.w.bbox.image, bboxes=new_bb_list)
         self._set_ui_from_ir(new_ir)
 
-    def _bbox_sel_change_cb(self, change: dict[str, Any]) -> None:
+    def _bbox_selection_change_cb(self, change: dict[str, Any]) -> None:
         new_ix = change["new"]
         # Update grid with new selection (also reverse)
+        if new_ix == -1:
+            self.w.grid.clear_selection()
+        else:
+            # In row selection mode, only need to select a single column in the row.
+            self.w.grid.select(row1=new_ix, column1=0, clear_mode="all")
 
     ##
     # Right panel
@@ -214,6 +223,8 @@ class BBoxEdit:
             auto_fit_params={"area": "all"},
             layout={"height": "150px"},
         )
+        self.w.grid.observe(self._grid_selection_change, "selections")
+
         delete_row = widgets.Button(
             description="Delete Row", button_style="warning", icon="delete-left"
         )
@@ -223,15 +234,23 @@ class BBoxEdit:
             layout={"border": "1px solid black", "padding": "10px"},
         )
 
+    def _grid_selection_change(self, change: dict[str, Any]) -> None:
+        # See also _bbox_selection_change_cb
+        rows = set([cell["r"] for cell in self.w.grid.selected_cells])
+        if len(rows) == 1:
+            self.w.bbox.selected_index = rows.pop()
+        else:
+            # 0 or >1 rows selected. Set bbox to no selection
+            self.w.bbox.selected_index = -1
+
     def _delete_row_cb(self, button: widgets.Button) -> None:
         # See also _bbox_change_cb
-        with DEBUG:
-            # list of dicts {'r': 2, 'c': 1}
-            rows = set([cell["r"] for cell in self.w.grid.selected_cells])
-            if len(rows) > 0:
-                new_df = self.w.grid.data.drop(list(rows))
-                new_ir = bb.ImageResult.from_df(new_df, self.w.bbox.image)
-                self._set_ui_from_ir(new_ir)
+        # list of dicts {'r': 2, 'c': 1}
+        rows = set([cell["r"] for cell in self.w.grid.selected_cells])
+        if len(rows) > 0:
+            new_df = self.w.grid.data.drop(list(rows))
+            new_ir = bb.ImageResult.from_df(new_df, self.w.bbox.image)
+            self._set_ui_from_ir(new_ir)
 
     ##
     # Zoom panel

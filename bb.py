@@ -43,14 +43,15 @@ class ImageResult:
 
     @classmethod
     def from_df(cls, df: pd.DataFrame, file: str) -> Self:
-        """Overwrite the bboxes list with rows from df"""
-        bboxes: list[BBox] = []
-        for idx, row in df.iterrows():
+        """Create ImageResult from DataFrame"""
+        bboxes = [
             BBox(
                 category=row["category"],
                 xyxyn=[row["x1"], row["y1"], row["x2"], row["y2"]],
             )
-        return ImageResult(file=file, bboxes=bboxes)
+            for idx, row in df.iterrows()
+        ]
+        return cls(file=file, bboxes=bboxes)
 
 
 @dataclass(kw_only=True)
