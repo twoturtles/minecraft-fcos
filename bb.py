@@ -3,7 +3,7 @@
 import copy
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import InitVar, asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Self, Sequence
 
@@ -28,9 +28,17 @@ class BBox:
 class ImageResult:
     file: str
     bboxes: list[BBox]
+    base_path: InitVar[Path | str] = Path(".")
+
+    def __post_init__(self, base_path: Path | str) -> None:
+        self.base_path = Path(base_path)  # type: ignore[attr-defined]
+
+    @property
+    def full_path(self) -> Path:
+        return self.base_path / self.file  # type: ignore
 
     def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
-        return plot_bb(Image.open(self.file), self.bboxes, categories)
+        return plot_bb(Image.open(self.full_path), self.bboxes, categories)
 
     def to_df(self, sort: bool = True) -> pd.DataFrame:
         df = pd.DataFrame(
@@ -42,7 +50,9 @@ class ImageResult:
         return df
 
     @classmethod
-    def from_df(cls, df: pd.DataFrame, file: str) -> Self:
+    def from_df(
+        cls, df: pd.DataFrame, file: str, base_path: Path | str = Path(".")
+    ) -> Self:
         """Create ImageResult from DataFrame"""
         bboxes = [
             BBox(
@@ -58,6 +68,14 @@ class ImageResult:
 class Dataset:
     categories: list[str]
     images: list[ImageResult]
+    base_path: InitVar[Path | str] = Path(".")
+
+    def __post_init__(self, base_path: Path | str) -> None:
+        self.base_path = Path(base_path)  # type: ignore[attr-defined]
+
+    @property
+    def full_path(self) -> Path:
+        return self.base_path / self.file  # type: ignore
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -76,7 +94,13 @@ class Dataset:
         path = Path(path)
         with open(path, "r") as f:
             data = json.load(f)
-        return cls.from_dict(data)
+        dset = cls.from_dict(data)
+        dset.base_path = path.parent
+        return dset
+
+    @classmethod
+    def empty(cls) -> Self:
+        return cls(categories=[], images=[])
 
     def copy(self) -> Self:
         return copy.deepcopy(self)
