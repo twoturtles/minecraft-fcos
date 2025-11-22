@@ -92,94 +92,6 @@ class Dataset(BaseModel):
         return self.model_copy(deep=True)
 
 
-@dataclass(kw_only=True)
-class BBox1:
-    category: str
-    xyxyn: list[float]  # len 4
-
-
-@dataclass(kw_only=True)
-class ImageResult1:
-    file: str
-    bboxes: list[BBox1]
-    base_path: InitVar[Path | str] = Path(".")
-
-    def __post_init__(self, base_path: Path | str) -> None:
-        self.base_path = Path(base_path)  # type: ignore[attr-defined]
-
-    @property
-    def full_path(self) -> Path:
-        return self.base_path / self.file  # type: ignore
-
-    def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
-        return plot_bb(Image.open(self.full_path), self.bboxes, categories)
-
-    def to_df(self, sort: bool = True) -> pd.DataFrame:
-        df = pd.DataFrame(
-            [[bbox.category, *bbox.xyxyn] for bbox in self.bboxes],
-            columns=["category", "x1", "y1", "x2", "y2"],
-        )
-        if sort:
-            df = df.sort_values("category").reset_index(drop=True)
-        return df
-
-    @classmethod
-    def from_df(
-        cls, df: pd.DataFrame, file: str, base_path: Path | str = Path(".")
-    ) -> Self:
-        """Create ImageResult from DataFrame"""
-        bboxes = [
-            BBox1(
-                category=row["category"],
-                xyxyn=[row["x1"], row["y1"], row["x2"], row["y2"]],
-            )
-            for idx, row in df.iterrows()
-        ]
-        return cls(file=file, bboxes=bboxes)
-
-
-@dataclass(kw_only=True)
-class Dataset1:
-    categories: list[str]
-    images: list[ImageResult1]
-    base_path: InitVar[Path | str] = Path(".")
-
-    def __post_init__(self, base_path: Path | str) -> None:
-        self.base_path = Path(base_path)  # type: ignore[attr-defined]
-
-    @property
-    def full_path(self) -> Path:
-        return self.base_path / self.file  # type: ignore
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, dataset_dict: dict[str, Any]) -> Self:
-        return dacite.from_dict(data_class=cls, data=dataset_dict)
-
-    def save(self, path: str | Path) -> None:
-        path = Path(path)
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
-
-    @classmethod
-    def load(cls, path: str | Path) -> Self:
-        path = Path(path)
-        with open(path, "r") as f:
-            data = json.load(f)
-        dset = cls.from_dict(data)
-        dset.base_path = path.parent
-        return dset
-
-    @classmethod
-    def empty(cls) -> Self:
-        return cls(categories=[], images=[])
-
-    def copy(self) -> Self:
-        return copy.deepcopy(self)
-
-
 # BBox utils
 
 
@@ -263,7 +175,7 @@ class InferViewer[T]:
 
     def __init__(
         self,
-        infer_fn: Callable[[T], ImageResult1],
+        infer_fn: Callable[[T], ImageResult],
         infer_list: list[T],
         categories: list[str] | None = None,
     ):
