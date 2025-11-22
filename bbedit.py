@@ -83,7 +83,7 @@ class BBoxEdit:
         size = self.current_image.size
         self.w.bbox.image = str(image_result.file)
         self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
-        self.w.grid.data = image_result.to_df(sort=False)
+        self.w.grid.data = image_result.to_df()
         self._grid_update_height()
         self._update_zoom()
 

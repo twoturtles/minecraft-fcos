@@ -5,29 +5,103 @@ import json
 import logging
 from dataclasses import InitVar, asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Self, Sequence
+from typing import Annotated, Any, Callable, Self, Sequence
 
 import dacite
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from IPython.display import display
 from PIL import Image, ImageDraw
+from pydantic import BaseModel, Field
 
 import tt
 
 LOG = logging.getLogger(__name__)
 
 
+class BBox(BaseModel):
+    category: str
+    xyxyn: Annotated[list[float], Field(min_length=4, max_length=4)]
+
+
+class ImageResult(BaseModel):
+    file: str  # Relative to base_path
+    bboxes: list[BBox]
+    base_path: Annotated[Path | None, Field(exclude=True)] = None
+
+    @property
+    def full_path(self) -> Path:
+        if self.base_path:
+            return self.base_path / self.file
+        else:
+            return Path(self.file)
+
+    def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
+        return plot_bb(Image.open(self.full_path), self.bboxes, categories)
+
+    def to_df(self) -> pd.DataFrame:
+        df = pd.DataFrame(
+            [[bbox.category, *bbox.xyxyn] for bbox in self.bboxes],
+            columns=["category", "x1", "y1", "x2", "y2"],
+        )
+        return df
+
+    @classmethod
+    def from_df(
+        cls, df: pd.DataFrame, file: str, base_path: Path | str = Path(".")
+    ) -> Self:
+        """Create ImageResult from DataFrame"""
+        bboxes = [
+            BBox(
+                category=row["category"],
+                xyxyn=[row["x1"], row["y1"], row["x2"], row["y2"]],
+            )
+            for idx, row in df.iterrows()
+        ]
+        return cls(file=file, bboxes=bboxes, base_path=base_path)
+
+
+class Dataset(BaseModel):
+    categories: list[str]
+    images: list[ImageResult]
+    file_path: Annotated[Path | None, Field(exclude=True)] = None
+
+    @property
+    def base_path(self) -> Path:
+        if self.file_path:
+            return self.file_path.parent
+        else:
+            return Path(".")
+
+    def save(self, file_path: Path | str | None = None) -> None:
+        if file_path is None:
+            file_path = self.file_path
+            assert file_path is not None
+        file_path = Path(file_path)
+        with open(file_path, "w") as f:
+            f.write(self.model_dump_json(indent=2))
+
+    @classmethod
+    def load(cls, file_path: Path | str) -> Self:
+        file_path = Path(file_path)
+        with open(file_path, "r") as f:
+            json_str = f.read()
+        return cls.model_validate_json(json_str)
+
+    def copy_deep(self) -> Self:
+        return self.model_copy(deep=True)
+
+
 @dataclass(kw_only=True)
-class BBox:
+class BBox1:
     category: str
     xyxyn: list[float]  # len 4
 
 
 @dataclass(kw_only=True)
-class ImageResult:
+class ImageResult1:
     file: str
-    bboxes: list[BBox]
+    bboxes: list[BBox1]
     base_path: InitVar[Path | str] = Path(".")
 
     def __post_init__(self, base_path: Path | str) -> None:
@@ -55,7 +129,7 @@ class ImageResult:
     ) -> Self:
         """Create ImageResult from DataFrame"""
         bboxes = [
-            BBox(
+            BBox1(
                 category=row["category"],
                 xyxyn=[row["x1"], row["y1"], row["x2"], row["y2"]],
             )
@@ -65,9 +139,9 @@ class ImageResult:
 
 
 @dataclass(kw_only=True)
-class Dataset:
+class Dataset1:
     categories: list[str]
-    images: list[ImageResult]
+    images: list[ImageResult1]
     base_path: InitVar[Path | str] = Path(".")
 
     def __post_init__(self, base_path: Path | str) -> None:
@@ -189,7 +263,7 @@ class InferViewer[T]:
 
     def __init__(
         self,
-        infer_fn: Callable[[T], ImageResult],
+        infer_fn: Callable[[T], ImageResult1],
         infer_list: list[T],
         categories: list[str] | None = None,
     ):
