@@ -45,7 +45,7 @@ class BBoxEdit:
         # Load dataset
         if isinstance(input, bb.Dataset):
             self.file = None
-            self.dset = input.copy()
+            self.dset = input.copy_deep()
         else:
             self.file = Path(input)
             self.dset = bb.Dataset.load(self.file)
@@ -54,6 +54,7 @@ class BBoxEdit:
         self.w = SimpleNamespace()
         self.current_image = Image.Image()
         self.updating_selection = False  # Prevent cyclic updates
+        self.updating_ui = False
 
         # Create all widgets
         bbox = self._create_bbox_panel()
@@ -79,13 +80,20 @@ class BBoxEdit:
 
     def _set_ui_from_ir(self, image_result: bb.ImageResult) -> None:
         """Update UI from passed ImageResult"""
-        self.current_image = Image.open(image_result.file)
-        size = self.current_image.size
-        self.w.bbox.image = str(image_result.file)
-        self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
-        self.w.grid.data = image_result.to_df()
-        self._grid_update_height()
-        self._update_zoom()
+        if self.updating_ui:
+            return
+        self.updating_ui = True
+
+        try:
+            self.current_image = Image.open(image_result.full_path)
+            size = self.current_image.size
+            self.w.bbox.image = str(image_result.full_path)
+            self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
+            self.w.grid.data = image_result.to_df()
+            self._grid_update_height()
+            self._update_zoom()
+        finally:
+            self.updating_ui = False
 
     def _set_ui_from_index(self, index: int) -> None:
         """Update bbox widget to selected index."""
@@ -110,7 +118,10 @@ class BBoxEdit:
         new_bbebb_list: list[BBeBB] = change["new"]
         # update grid with new bboxes (see also _delete_row_cb)
         new_bb_list = from_bbox_widget(new_bbebb_list, self.current_image.size)
-        new_ir = bb.ImageResult(file=self.w.bbox.image, bboxes=new_bb_list)
+        rel = Path(self.w.bbox.image).relative_to(self.dset.base_path)
+        new_ir = bb.ImageResult(
+            file=str(rel), bboxes=new_bb_list, base_path=self.dset.base_path
+        )
         self._set_ui_from_ir(new_ir)
 
     def _bbox_selection_change_cb(self, change: dict[str, Any]) -> None:
@@ -262,7 +273,9 @@ class BBoxEdit:
         rows = set([cell["r"] for cell in self.w.grid.selected_cells])
         if len(rows) > 0:
             new_df = self.w.grid.data.drop(list(rows))
-            new_ir = bb.ImageResult.from_df(new_df, self.w.bbox.image)
+            new_ir = bb.ImageResult.from_df(
+                new_df, self.w.bbox.image, base_path=self.dset.base_path
+            )
             self._set_ui_from_ir(new_ir)
 
     def _grid_update_height(self) -> None:

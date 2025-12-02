@@ -1,13 +1,9 @@
 """Bounding Boxes"""
 
-import copy
-import json
 import logging
-from dataclasses import InitVar, asdict, dataclass
 from pathlib import Path
-from typing import Annotated, Any, Callable, Self, Sequence
+from typing import Annotated, Callable, Iterator, Self, Sequence
 
-import dacite
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 from IPython.display import display
@@ -62,8 +58,8 @@ class ImageResult(BaseModel):
 
 
 class Dataset(BaseModel):
-    categories: list[str]
-    images: list[ImageResult]
+    categories: list[str] = []  # Pydantic can handle mutable defaults
+    images: list[ImageResult] = []
     file_path: Annotated[Path | None, Field(exclude=True)] = None
 
     @property
@@ -86,10 +82,18 @@ class Dataset(BaseModel):
         file_path = Path(file_path)
         with open(file_path, "r") as f:
             json_str = f.read()
-        return cls.model_validate_json(json_str)
+        dset = cls.model_validate_json(json_str)
+        dset.file_path = file_path
+        for ir in dset.iter_images():
+            ir.base_path = dset.base_path
+        return dset
 
     def copy_deep(self) -> Self:
         return self.model_copy(deep=True)
+
+    def iter_images(self) -> Iterator[ImageResult]:
+        for image in self.images:
+            yield image
 
 
 # BBox utils
