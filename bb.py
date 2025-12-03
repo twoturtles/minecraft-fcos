@@ -1,6 +1,7 @@
 """Bounding Boxes"""
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, Self, Sequence
 
@@ -9,6 +10,7 @@ import pandas as pd
 from IPython.display import display
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
+from ruamel.yaml import YAML
 
 import tt
 
@@ -95,11 +97,55 @@ class Dataset(BaseModel):
         for image in self.images:
             yield image
 
-    def create_image_result(
-        self, file: str, bboxes: list[BBox]
-    ) -> ImageResult:
+    def create_image_result(self, file: str, bboxes: list[BBox]) -> ImageResult:
         """Create an ImageResult with this dataset's base_path pre-set."""
         return ImageResult(file=file, bboxes=bboxes, base_path=self.base_path)
+
+    def to_yolo(self, output_dir: Path | str) -> None:
+        """Export dataset to YOLO format.
+
+        Creates a directory structure with:
+        - images/ folder with image files
+        - labels/ folder with .txt annotation files
+        - data.yaml with class names
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        images_dir = output_dir / "images"
+        labels_dir = output_dir / "labels"
+        images_dir.mkdir(exist_ok=True)
+        labels_dir.mkdir(exist_ok=True)
+
+        # Export annotations
+        for image_result in self.iter_images():
+            # Copy image file
+            src_img = image_result.full_path
+            dst_img = images_dir / Path(image_result.file).name
+            shutil.copy2(src_img, dst_img)
+
+            # Write YOLO annotations
+            label_file = labels_dir / (Path(image_result.file).stem + ".txt")
+            with open(label_file, "w") as f:
+                for bbox in image_result.bboxes:
+                    class_id = self.categories.index(bbox.category)
+                    yolo = xyxyn_to_yolo(bbox.xyxyn)
+                    f.write(f"{class_id} {yolo[0]} {yolo[1]} {yolo[2]} {yolo[3]}\n")
+
+        # Write data.yaml
+        yaml = YAML()
+        data = {
+            "path": str(output_dir.absolute()),
+            "train": "images",
+            "val": "images",
+            "nc": len(self.categories),
+            "names": {i: category for i, category in enumerate(self.categories)},
+        }
+
+        with open(output_dir / "data.yaml", "w") as f:
+            yaml.dump(data, f)
+
+        LOG.info(f"Exported {len(self.images)} images to YOLO format at {output_dir}")
 
 
 # BBox utils
@@ -153,6 +199,16 @@ def xyxyn_to_coco(xyxyn: list[float], size: tuple[int, int]) -> list[float]:
 
 def coco_to_xyxyn(coco: list[float], size: tuple[int, int]) -> list[float]:
     return xyxy_to_xyxyn(coco_to_xyxy(coco), size)
+
+
+def xyxyn_to_yolo(xyxyn: list[float]) -> list[float]:
+    # yolo is (center_x, center_y, width, height) normalized
+    x1, y1, x2, y2 = xyxyn
+    center_x = (x1 + x2) / 2
+    center_y = (y1 + y2) / 2
+    width = x2 - x1
+    height = y2 - y1
+    return [center_x, center_y, width, height]
 
 
 def plot_bb(
