@@ -119,9 +119,7 @@ class BBoxEdit:
         # update grid with new bboxes (see also _delete_row_cb)
         new_bb_list = from_bbox_widget(new_bbebb_list, self.current_image.size)
         rel = Path(self.w.bbox.image).relative_to(self.dset.base_path)
-        new_ir = bb.ImageResult(
-            file=str(rel), bboxes=new_bb_list, base_path=self.dset.base_path
-        )
+        new_ir = self.dset.create_image_result(str(rel), new_bb_list)
         self._set_ui_from_ir(new_ir)
 
     def _bbox_selection_change_cb(self, change: dict[str, Any]) -> None:

@@ -95,6 +95,12 @@ class Dataset(BaseModel):
         for image in self.images:
             yield image
 
+    def create_image_result(
+        self, file: str, bboxes: list[BBox]
+    ) -> ImageResult:
+        """Create an ImageResult with this dataset's base_path pre-set."""
+        return ImageResult(file=file, bboxes=bboxes, base_path=self.base_path)
+
 
 # BBox utils
 
