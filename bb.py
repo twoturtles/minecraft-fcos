@@ -1,6 +1,8 @@
 """Bounding Boxes"""
 
+import copy
 import logging
+import random
 import shutil
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, Self, Sequence
@@ -90,6 +92,14 @@ class Dataset(BaseModel):
             ir.base_path = dset.base_path
         return dset
 
+    def split(
+        self, pct1: float | int, seed: int | float | None = None
+    ) -> tuple[Self, Self]:
+        ir1, ir2 = split(self.images, pct1, seed)
+        d1 = self.model_copy(update={"images": ir1}, deep=True)
+        d2 = self.model_copy(update={"images": ir2}, deep=True)
+        return d1, d2
+
     def copy_deep(self) -> Self:
         return self.model_copy(deep=True)
 
@@ -149,6 +159,19 @@ class Dataset(BaseModel):
 
 
 # BBox utils
+
+
+def split(
+    images: list[ImageResult], pct1: float | int, seed: int | float | None = None
+) -> tuple[list[ImageResult], list[ImageResult]]:
+    """Split list of images based on passed percentage"""
+    pct = pct1 / 100.0 if pct1 >= 1 else float(pct1)
+    pct = max(0.0, min(pct, 1.0))
+    n1 = int(pct * len(images))
+    rnd = random.Random(seed)
+    shuffled = copy.deepcopy(images)
+    rnd.shuffle(shuffled)
+    return shuffled[:n1], shuffled[n1:]
 
 
 def sort_xyxy[T: (int, float)](xyxy: list[T]) -> list[T]:
