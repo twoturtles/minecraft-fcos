@@ -92,14 +92,6 @@ class Dataset(BaseModel):
             ir.base_path = dset.base_path
         return dset
 
-    def split(
-        self, pct1: float | int, seed: int | float | None = None
-    ) -> tuple[Self, Self]:
-        ir1, ir2 = split(self.images, pct1, seed)
-        d1 = self.model_copy(update={"images": ir1}, deep=True)
-        d2 = self.model_copy(update={"images": ir2}, deep=True)
-        return d1, d2
-
     def copy_deep(self) -> Self:
         return self.model_copy(deep=True)
 
@@ -111,49 +103,36 @@ class Dataset(BaseModel):
         """Create an ImageResult with this dataset's base_path pre-set."""
         return ImageResult(file=file, bboxes=bboxes, base_path=self.base_path)
 
-    def to_yolo(self, output_dir: Path | str) -> None:
-        """Export dataset to YOLO format.
-
-        Creates a directory structure with:
-        - images/ folder with image files
-        - labels/ folder with .txt annotation files
-        - data.yaml with class names
-        """
+    def to_yolo(
+        self,
+        output_dir: Path | str,
+        train_pct: int | float,
+        seed: int | float | None = None,
+    ) -> None:
+        """Export dataset to YOLO format."""
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        images_dir = output_dir / "images"
-        labels_dir = output_dir / "labels"
-        images_dir.mkdir(exist_ok=True)
-        labels_dir.mkdir(exist_ok=True)
-
-        # Export annotations
-        for image_result in self.iter_images():
-            # Copy image file
-            src_img = image_result.full_path
-            dst_img = images_dir / Path(image_result.file).name
-            shutil.copy2(src_img, dst_img)
-
-            # Write YOLO annotations
-            label_file = labels_dir / (Path(image_result.file).stem + ".txt")
-            with open(label_file, "w") as f:
-                for bbox in image_result.bboxes:
-                    class_id = self.categories.index(bbox.category)
-                    yolo = xyxyn_to_yolo(bbox.xyxyn)
-                    f.write(f"{class_id} {yolo[0]} {yolo[1]} {yolo[2]} {yolo[3]}\n")
-
-        # Write data.yaml
-        yaml = YAML()
-        data = {
+        yaml_data: dict[str, str | dict[int, str]] = {
             "path": str(output_dir.absolute()),
-            "train": "images",
-            "val": "images",
-            "nc": len(self.categories),
-            "names": {i: category for i, category in enumerate(self.categories)},
         }
 
+        train_irs, val_irs = split_ir(self.images, train_pct, seed)
+        for split_name, split_irs in [("train", train_irs), ("val", val_irs)]:
+            images_sub = f"images/{split_name}"
+            labels_sub = f"labels/{split_name}"
+            image_results_to_yolo(
+                split_irs,
+                self.categories,
+                output_dir / images_sub,
+                output_dir / labels_sub,
+            )
+            yaml_data[split_name] = images_sub
+
+        # Write data.yaml
+        yaml_data["names"] = {i: category for i, category in enumerate(self.categories)}
+        yaml = YAML()
         with open(output_dir / "data.yaml", "w") as f:
-            yaml.dump(data, f)
+            yaml.dump(yaml_data, f)
 
         LOG.info(f"Exported {len(self.images)} images to YOLO format at {output_dir}")
 
@@ -161,14 +140,39 @@ class Dataset(BaseModel):
 # BBox utils
 
 
-def split(
+def image_results_to_yolo(
+    image_results: list[ImageResult],
+    categories: list[str],
+    images_dir: Path,
+    labels_dir: Path,
+) -> None:
+    images_dir.mkdir(parents=True, exist_ok=True)
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    cat_map = {cat: i for i, cat in enumerate(categories)}
+
+    for image_result in image_results:
+        # Copy image file
+        src_img = image_result.full_path
+        dst_img = images_dir / Path(image_result.file).name
+        shutil.copy2(src_img, dst_img)
+
+        # Write YOLO annotations
+        label_file = labels_dir / (Path(image_result.file).stem + ".txt")
+        with open(label_file, "w") as f:
+            for bbox in image_result.bboxes:
+                class_id = cat_map[bbox.category]
+                x, y, w, h = xyxyn_to_yolo(bbox.xyxyn)
+                f.write(f"{class_id} {x} {y} {w} {h}\n")
+
+
+def split_ir(
     images: list[ImageResult], pct1: float | int, seed: int | float | None = None
 ) -> tuple[list[ImageResult], list[ImageResult]]:
     """Split list of images based on passed percentage"""
     pct = pct1 / 100.0 if pct1 >= 1 else float(pct1)
     pct = max(0.0, min(pct, 1.0))
     n1 = int(pct * len(images))
-    rnd = random.Random(seed)
+    rnd = random if seed is None else random.Random(seed)
     shuffled = copy.deepcopy(images)
     rnd.shuffle(shuffled)
     return shuffled[:n1], shuffled[n1:]
