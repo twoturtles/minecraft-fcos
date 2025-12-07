@@ -103,6 +103,88 @@ class Dataset(BaseModel):
         """Create an ImageResult with this dataset's base_path pre-set."""
         return ImageResult(file=file, bboxes=bboxes, base_path=self.base_path)
 
+    def to_df(self) -> pd.DataFrame:
+        """Convert dataset to DataFrame"""
+        rows = []
+        for idx, image_result in enumerate(self.iter_images()):
+            full_path = str(image_result.full_path)
+            for bbox in image_result.bboxes:
+                rows.append(
+                    {
+                        "image_idx": idx,
+                        "file": full_path,
+                        "category": bbox.category,
+                        "x1": bbox.xyxyn[0],
+                        "y1": bbox.xyxyn[1],
+                        "x2": bbox.xyxyn[2],
+                        "y2": bbox.xyxyn[3],
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def dataset_stats(self) -> pd.Series:
+        """Calculate useful statistics from a dataset DataFrame.
+        Returns: pd.Series with dataset statistics
+        """
+        df = self.to_df()
+        stats = {}
+
+        # Basic counts
+        stats["num_images"] = df["image_idx"].nunique()
+        stats["num_bboxes"] = len(df)
+        stats["avg_bboxes_per_image"] = (
+            len(df) / df["image_idx"].nunique() if len(df) > 0 else 0
+        )
+
+        # Category statistics
+        stats["num_categories"] = df["category"].nunique()
+        category_counts = df["category"].value_counts()
+        stats["most_common_category"] = (
+            category_counts.index[0] if len(category_counts) > 0 else None
+        )
+        stats["least_common_category"] = (
+            category_counts.index[-1] if len(category_counts) > 0 else None
+        )
+
+        # Bounding box size statistics (normalized coordinates)
+        if len(df) > 0:
+            df["width"] = df["x2"] - df["x1"]
+            df["height"] = df["y2"] - df["y1"]
+            df["area"] = df["width"] * df["height"]
+
+            stats["avg_bbox_width"] = df["width"].mean()
+            stats["avg_bbox_height"] = df["height"].mean()
+            stats["avg_bbox_area"] = df["area"].mean()
+            stats["min_bbox_area"] = df["area"].min()
+            stats["max_bbox_area"] = df["area"].max()
+
+        return pd.Series(stats)
+
+    def category_stats(self) -> pd.DataFrame:
+        """Get detailed statistics per category.
+        Returns: DataFrame with per-category statistics
+        """
+        df = self.to_df()
+        if len(df) == 0:
+            return pd.DataFrame()
+
+        df["width"] = df["x2"] - df["x1"]
+        df["height"] = df["y2"] - df["y1"]
+        df["area"] = df["width"] * df["height"]
+
+        stats = (
+            df.groupby("category")
+            .agg(
+                count=("category", "size"),
+                avg_width=("width", "mean"),
+                avg_height=("height", "mean"),
+                avg_area=("area", "mean"),
+            )
+            .round(4)
+        )
+
+        return stats.sort_values("count", ascending=False)
+
     def to_yolo(
         self,
         output_dir: Path | str,
