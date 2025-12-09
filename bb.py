@@ -13,6 +13,7 @@ from IPython.display import display
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
+from ultralytics.engine.results import Results
 
 import tt
 
@@ -373,3 +374,25 @@ class InferViewer[T]:
             continuous_update=False,
         )
         widgets.interact(self.view_image_cb, index=slider)
+
+
+def yr_to_ir(yolo: Results) -> ImageResult:
+    """Convert ultralytics yolo Results to ImageResult"""
+    bboxes = []
+    if yolo.boxes is not None and len(yolo.boxes) > 0:
+        # Get normalized xyxy coordinates
+        xyxyn = yolo.boxes.xyxyn.cpu().numpy()  # type: ignore
+        # Get class indices
+        cls = yolo.boxes.cls.cpu().numpy()  # type: ignore
+
+        for i in range(len(yolo.boxes)):
+            class_id = int(cls[i])
+            category = yolo.names[class_id]
+            coords = xyxyn[i].tolist()
+
+            bboxes.append(BBox(category=category, xyxyn=coords))
+
+    # Extract file path (convert Path to string if needed)
+    file_path = str(yolo.path) if yolo.path else ""
+
+    return ImageResult(file=file_path, bboxes=bboxes)
