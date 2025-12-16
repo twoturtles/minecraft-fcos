@@ -40,22 +40,35 @@ class ImageResult(BaseModel):
     def plot_bb(self, categories: list[str] | None = None) -> Image.Image:
         return plot_bb(Image.open(self.full_path), self.bboxes, categories)
 
-    def to_df(self) -> pd.DataFrame:
+    def to_df(self, *, size: tuple[int, int] | None = None) -> pd.DataFrame:
+        def _coords(b: BBox) -> list[float]:
+            return b.xyxyn if size is None else xyxyn_to_xyxy(b.xyxyn, size)
+
         df = pd.DataFrame(
-            [[bbox.category, *bbox.xyxyn] for bbox in self.bboxes],
+            [[bbox.category, *_coords(bbox)] for bbox in self.bboxes],
             columns=["category", "x1", "y1", "x2", "y2"],
         )
         return df
 
     @classmethod
     def from_df(
-        cls, df: pd.DataFrame, file: str, base_path: Path | str = Path(".")
+        cls,
+        df: pd.DataFrame,
+        file: str,
+        *,
+        size: tuple[int, int] | None = None,
+        base_path: Path | str = Path("."),
     ) -> Self:
-        """Create ImageResult from DataFrame"""
+        """Create ImageResult from DataFrame.
+        Expects columns: category, x1, y2, x2, y2. Other columns are ignored"""
+
+        def _coords(coord_in: list[float]) -> list[float]:
+            return coord_in if size is None else xyxy_to_xyxyn(coord_in, size)
+
         bboxes = [
             BBox(
                 category=row["category"],
-                xyxyn=[row["x1"], row["y1"], row["x2"], row["y2"]],
+                xyxyn=_coords([row["x1"], row["y1"], row["x2"], row["y2"]]),
             )
             for idx, row in df.iterrows()
         ]

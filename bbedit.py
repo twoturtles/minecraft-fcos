@@ -89,7 +89,9 @@ class BBoxEdit:
             size = self.current_image.size
             self.w.bbox.image = str(image_result.full_path)
             self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
-            self.w.grid.data = image_result.to_df()
+            df = image_result.to_df(size=size)
+            df["area"] = (df["x2"] - df["x1"]) * (df["y2"] - df["y1"])
+            self.w.grid.data = df
             self._grid_update_height()
             self._update_zoom()
         finally:
@@ -268,11 +270,12 @@ class BBoxEdit:
     def _delete_row_cb(self, button: widgets.Button) -> None:
         # See also _bbox_change_cb
         # list of dicts {'r': 2, 'c': 1}
+        size = self.current_image.size
         rows = set([cell["r"] for cell in self.w.grid.selected_cells])
         if len(rows) > 0:
             new_df = self.w.grid.data.drop(list(rows))
             new_ir = bb.ImageResult.from_df(
-                new_df, self.w.bbox.image, base_path=self.dset.base_path
+                new_df, self.w.bbox.image, size=size, base_path=self.dset.base_path
             )
             self._set_ui_from_ir(new_ir)
 

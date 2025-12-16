@@ -1,3 +1,11 @@
+"""
+uv run mcio inst launch main -w main -W 640 -H 640
+uv run mc_run.py <model_path>
+
+Example:
+uv run mc_run.py /Users/joe/src/data/yolo/runs/detect/keep/no_small/weights/best.pt
+"""
+
 import argparse
 import logging
 import sys
@@ -31,15 +39,11 @@ def bb_frame_cb(
     return np.array(img)
 
 
-def load_data() -> tuple[ul.YOLO, bb.Dataset]:
+def load_data(model_path: Path) -> tuple[ul.YOLO, bb.Dataset]:
     LOG.info("LOAD-DATA-START")
     data_path = Path.home() / "src/data"
-    mc_data_path = data_path / "minecraft/mobs/info.json"
+    mc_data_path = data_path / "minecraft/info.json"
     yolo_path = data_path / "yolo"
-    models_path = yolo_path / "models"
-    # model_path = Path("/Users/joe/src/data/yolo/runs/detect/keep1/weights/best.pt")
-    # model_path = Path("/Users/joe/src/data/yolo/runs/detect/train9/weights/best.pt")
-    model_path = Path("/Users/joe/src/data/yolo/runs/detect/keep3/weights/best.pt")
 
     ul.settings.update(  # type: ignore
         {
@@ -55,8 +59,16 @@ def load_data() -> tuple[ul.YOLO, bb.Dataset]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Run YOLO model on Minecraft frames")
+    parser.add_argument(
+        "model",
+        type=Path,
+        help="Path to the YOLO model file (e.g., best.pt)",
+    )
+    args = parser.parse_args()
+
     tt.logging_init()
-    model, dset = load_data()
+    model, dset = load_data(args.model)
 
     pipeline: mc.mcio_gui.FramePipeline = [
         partial(bb_frame_cb, model=model, dset=dset),
