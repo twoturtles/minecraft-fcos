@@ -325,10 +325,21 @@ def plot_bb(
     img: Image.Image, bboxes: Sequence[BBox], categories: Sequence[str] | None
 ) -> Image.Image:
     """
-    Plot bounding boxes
+    Plot bounding boxes on copy of img
     Optionally pass categories for consistent colors
     """
     img = img.copy()
+    plot_bb_inplace(img, bboxes, categories)
+    return img
+
+
+def plot_bb_inplace(
+    img: Image.Image, bboxes: Sequence[BBox], categories: Sequence[str] | None
+) -> None:
+    """
+    Plot bounding boxes on img
+    Optionally pass categories for consistent colors
+    """
     draw = ImageDraw.Draw(img)
 
     if categories is None:
@@ -342,8 +353,6 @@ def plot_bb(
         xyxy = xyxyn_to_xyxy(bbox.xyxyn, img.size)
         draw.rectangle(((xyxy[0], xyxy[1]), (xyxy[2], xyxy[3])), outline=color, width=2)
         draw.text((xyxy[0] + 4, xyxy[1] + 2), bbox.category, fill=color, font_size=16)
-
-    return img
 
 
 class InferViewer[T]:
@@ -376,8 +385,8 @@ class InferViewer[T]:
         widgets.interact(self.view_image_cb, index=slider)
 
 
-def yr_to_ir(yolo: Results) -> ImageResult:
-    """Convert ultralytics yolo Results to ImageResult"""
+def yr_to_bb(yolo: Results) -> list[BBox]:
+    """Convert ultralytics yolo Results to BBoxes"""
     bboxes = []
     if yolo.boxes is not None and len(yolo.boxes) > 0:
         # Get normalized xyxy coordinates
@@ -392,7 +401,11 @@ def yr_to_ir(yolo: Results) -> ImageResult:
 
             bboxes.append(BBox(category=category, xyxyn=coords))
 
-    # Extract file path (convert Path to string if needed)
-    file_path = str(yolo.path) if yolo.path else ""
+    return bboxes
 
+
+def yr_to_ir(yolo: Results) -> ImageResult:
+    """Convert ultralytics yolo Results to ImageResult"""
+    bboxes = yr_to_bb(yolo)
+    file_path = str(yolo.path) if yolo.path else ""
     return ImageResult(file=file_path, bboxes=bboxes)
