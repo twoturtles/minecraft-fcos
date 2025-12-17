@@ -29,21 +29,17 @@ def bb_frame_cb(
     obs: mc.network.ObservationPacket,
     *,
     model: ul.YOLO,
-    dset: bb.Dataset,
 ) -> NDArray[np.uint8]:
     pred = model(frame, verbose=False)[0]
     bboxes = bb.yr_to_bb(pred)
     img = Image.fromarray(frame, mode="RGB")
-    bb.plot_bb_inplace(img, bboxes, dset.categories)
+    bb.plot_bb_inplace(img, bboxes, model.names.values())
     # print(bboxes)
     return np.array(img)
 
 
-def load_data(model_path: Path) -> tuple[ul.YOLO, bb.Dataset]:
-    LOG.info("LOAD-DATA-START")
-    data_path = Path.home() / "src/data"
-    mc_data_path = data_path / "minecraft/info.json"
-    yolo_path = data_path / "yolo"
+def load_model(model_path: Path) -> ul.YOLO:
+    yolo_path = Path.home() / "src/data/yolo"
 
     ul.settings.update(  # type: ignore
         {
@@ -52,10 +48,8 @@ def load_data(model_path: Path) -> tuple[ul.YOLO, bb.Dataset]:
             "runs_dir": str(yolo_path / "runs"),
         }
     )
-    dset = bb.Dataset.load(mc_data_path)
     model = ul.YOLO(model_path)
-    LOG.info("LOAD-DATA-DONE")
-    return model, dset
+    return model
 
 
 def main() -> int:
@@ -68,10 +62,10 @@ def main() -> int:
     args = parser.parse_args()
 
     tt.logging_init()
-    model, dset = load_data(args.model)
+    model = load_model(args.model)
 
     pipeline: mc.mcio_gui.FramePipeline = [
-        partial(bb_frame_cb, model=model, dset=dset),
+        partial(bb_frame_cb, model=model),
         mc.mcio_gui.cursor_frame_cb,
     ]
     gui = mc.mcio_gui.MCioGUI(frame_pipeline=pipeline)

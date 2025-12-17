@@ -96,6 +96,23 @@ class Dataset(BaseModel):
             f.write(self.model_dump_json(indent=2))
 
     @classmethod
+    def new(
+        cls,
+        *,
+        file_path: Path | str,
+        categories: list[str],
+        images_sub: str = "images",
+        glob_pat: str = "*.png",
+    ) -> Self:
+        dset = cls(categories=categories, file_path=file_path)
+        files = [
+            str(f.relative_to(dset.base_path))
+            for f in (dset.base_path / images_sub).glob(glob_pat)
+        ]
+        dset.images = [dset.create_image_result(file=f, bboxes=[]) for f in files]
+        return dset
+
+    @classmethod
     def load(cls, file_path: Path | str) -> Self:
         file_path = Path(file_path)
         with open(file_path, "r") as f:
@@ -134,7 +151,14 @@ class Dataset(BaseModel):
                         "y2": bbox.xyxyn[3],
                     }
                 )
-        return pd.DataFrame(rows)
+        return pd.DataFrame(
+            rows, columns=["image_idx", "file", "category", "x1", "y1", "x2", "y2"]
+        )
+
+    def view(self) -> None:
+        InferViewer[ImageResult](
+            lambda ir: ir, self.images, self.categories
+        ).show_widget()
 
     def dataset_stats(self) -> pd.Series:
         """Calculate useful statistics from a dataset DataFrame.
