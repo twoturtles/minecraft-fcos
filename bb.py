@@ -99,17 +99,33 @@ class Dataset(BaseModel):
     def new(
         cls,
         *,
-        file_path: Path | str,
+        dset_dir: Path | str,
         categories: list[str],
+        input_images_dir: Path | str | None = None,
+        info_fname: str = "info.json",
         images_sub: str = "images",
         glob_pat: str = "*.png",
     ) -> Self:
-        dset = cls(categories=categories, file_path=file_path)
-        files = [
-            str(f.relative_to(dset.base_path))
-            for f in (dset.base_path / images_sub).glob(glob_pat)
-        ]
-        dset.images = [dset.create_image_result(file=f, bboxes=[]) for f in files]
+        dset_dir = Path(dset_dir)
+        dset_dir.mkdir(parents=True)  # Fail if it exists
+        info_path = dset_dir / info_fname
+        images_dir = dset_dir / images_sub
+        images_dir.mkdir()
+
+        dset = cls(categories=categories, file_path=info_path)
+
+        if input_images_dir is not None:
+            input_images_dir = Path(input_images_dir)
+            image_files = input_images_dir.glob(glob_pat)
+            for ifile in image_files:
+                shutil.copy2(ifile, images_dir)
+                ir = dset.create_image_result(
+                    file=f"{images_sub}/{ifile.name}", bboxes=[]
+                )
+                dset.images.append(ir)
+
+        dset.save()
+        print(f"Created {info_path}, {len(dset.images)} images")
         return dset
 
     @classmethod

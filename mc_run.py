@@ -33,7 +33,7 @@ def bb_frame_cb(
     pred = model(frame, verbose=False)[0]
     bboxes = bb.yr_to_bb(pred)
     img = Image.fromarray(frame, mode="RGB")
-    bb.plot_bb_inplace(img, bboxes, model.names.values())
+    bb.plot_bb_inplace(img, bboxes, list(model.names.values()))
     # print(bboxes)
     return np.array(img)
 
