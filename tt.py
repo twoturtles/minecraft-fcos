@@ -113,3 +113,17 @@ class Colors:
         # Split into 6-character chunks
         hex_string = self.schemes[scheme]
         return [hex_string[i : i + 6] for i in range(0, len(hex_string), 6)]
+
+
+def get_torch_device(print_device: bool = True) -> str:
+    # Get cpu, gpu or mps device for training.
+    import torch
+
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available() else "cpu"
+    )
+    print(f"Torch device: {device}")
+
+    return device
