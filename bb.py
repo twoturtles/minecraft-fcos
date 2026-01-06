@@ -5,19 +5,23 @@ import logging
 import random
 import shutil
 from pathlib import Path
-from typing import Annotated, Callable, Iterator, Self, Sequence
+from typing import Annotated, Any, Callable, Iterator, Self, Sequence
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
+import torch
 from IPython.display import display
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
+from torchvision.datasets import VisionDataset  # type: ignore
 from ultralytics.engine.results import Results
 
 import tt
 
 LOG = logging.getLogger(__name__)
+
+DEFAULT_INFO_FNAME: str = "info.json"
 
 
 class BBox(BaseModel):
@@ -102,7 +106,7 @@ class Dataset(BaseModel):
         dset_dir: Path | str,
         categories: list[str],
         input_images_dir: Path | str | None = None,
-        info_fname: str = "info.json",
+        info_fname: str = DEFAULT_INFO_FNAME,
         images_sub: str = "images",
         glob_pat: str = "*.png",
     ) -> Self:
@@ -181,13 +185,13 @@ class Dataset(BaseModel):
         Returns: pd.Series with dataset statistics
         """
         df = self.to_df()
-        stats = {}
+        stats: dict[str, Any] = {}
 
         # Basic counts
         stats["num_images"] = df["image_idx"].nunique()
         stats["num_bboxes"] = len(df)
         stats["avg_bboxes_per_image"] = (
-            len(df) / df["image_idx"].nunique() if len(df) > 0 else 0
+            len(df) / df["image_idx"].nunique() if len(df) > 0 else 0.0
         )
 
         # Category statistics
@@ -271,6 +275,58 @@ class Dataset(BaseModel):
             yaml.dump(yaml_data, f)
 
         LOG.info(f"Exported {len(self.images)} images to YOLO format at {output_dir}")
+
+
+#
+# Torch dataset
+#
+
+
+class TorchDataset(VisionDataset):  # type: ignore
+    def __init__(
+        self,
+        root: str | Path,
+        info_fname: str = DEFAULT_INFO_FNAME,
+        transform: Callable[..., Any] | None = None,
+        target_transform: Callable[..., Any] | None = None,
+    ):
+        super().__init__(
+            root=root,
+            transform=transform,
+            target_transform=target_transform,
+        )
+
+        self.dset = Dataset.load(Path(root) / info_fname)
+
+    def __len__(self) -> int:
+        return len(self.dset.images)
+
+    def __getitem__(self, idx: int) -> tuple[Image.Image, dict[str, Any]]:
+        img_result = self.dset.images[idx]
+        img = Image.open(img_result.full_path)
+
+        # Build target dict
+        target = {
+            "boxes": torch.tensor(
+                [bbox.xyxyn for bbox in img_result.bboxes], dtype=torch.float32
+            ),
+            "labels": torch.tensor(
+                [
+                    self.dset.categories.index(bbox.category)
+                    for bbox in img_result.bboxes
+                ],
+                dtype=torch.int64,
+            ),
+            "image_id": idx,
+            "file": img_result.file,
+        }
+
+        if self.transform:
+            img = self.transform(img)
+        if self.target_transform:
+            target = self.target_transform(target)
+
+        return img, target
 
 
 # BBox utils
