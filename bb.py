@@ -288,16 +288,15 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
         root: str | Path,
         info_fname: str = DEFAULT_INFO_FNAME,
         transform: Callable[..., Any] | None = None,
-        target_transform: Callable[..., Any] | None = None,
     ):
-        super().__init__(
-            root=root,
-            transform=transform,
-            target_transform=target_transform,
-        )
+        super().__init__(root=root, transform=transform)
 
         self.dset = Dataset.load(Path(root) / info_fname)
         self.category2idx = {name: i for i, name in enumerate(self.dset.categories)}
+
+    @property
+    def categories(self) -> list[str]:
+        return self.dset.categories
 
     def __len__(self) -> int:
         return len(self.dset.images)
@@ -309,25 +308,27 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
 
         # Build target dict
         h, w = img.shape[1:]
+        boxes_data = [xyxyn_to_xyxy(bb.xyxyn, (w, h)) for bb in img_result.bboxes]
+        boxes = tv.tv_tensors.BoundingBoxes(
+            boxes_data if boxes_data else torch.zeros((0, 4)),
+            format=tv.tv_tensors.BoundingBoxFormat.XYXY,
+            canvas_size=(h, w),
+        )
+        labels = torch.tensor(
+            [self.category2idx[bbox.category] for bbox in img_result.bboxes],
+            dtype=torch.int64,
+        )
+
+        if self.transform:
+            img, boxes, labels = self.transform(img, boxes, labels)
+
         target = {
-            "boxes": tv.tv_tensors.BoundingBoxes(
-                [xyxyn_to_xyxy(bb.xyxyn, (w, h)) for bb in img_result.bboxes],
-                format=tv.tv_tensors.BoundingBoxFormat.XYXY,
-                canvas_size=(h, w),
-            ),
-            "labels": torch.tensor(
-                [self.category2idx[bbox.category] for bbox in img_result.bboxes],
-                dtype=torch.int64,
-            ),
+            "boxes": boxes,
+            "labels": labels,
             "image_id": idx,
             "file": img_result.file,
             "image_result": img_result,
         }
-
-        if self.transform:
-            img = self.transform(img)
-        if self.target_transform:
-            target = self.target_transform(target)
 
         return img, target
 
