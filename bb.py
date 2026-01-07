@@ -10,11 +10,11 @@ from typing import Annotated, Any, Callable, Iterator, Self, Sequence
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 import torch
+import torchvision as tv  # type: ignore
 from IPython.display import display
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
-from torchvision.datasets import VisionDataset  # type: ignore
 from ultralytics.engine.results import Results
 
 import tt
@@ -282,7 +282,7 @@ class Dataset(BaseModel):
 #
 
 
-class TorchDataset(VisionDataset):  # type: ignore
+class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
     def __init__(
         self,
         root: str | Path,
@@ -297,28 +297,31 @@ class TorchDataset(VisionDataset):  # type: ignore
         )
 
         self.dset = Dataset.load(Path(root) / info_fname)
+        self.category2idx = {name: i for i, name in enumerate(self.dset.categories)}
 
     def __len__(self) -> int:
         return len(self.dset.images)
 
-    def __getitem__(self, idx: int) -> tuple[Image.Image, dict[str, Any]]:
+    def __getitem__(self, idx: int) -> tuple[tv.tv_tensors.Image, dict[str, Any]]:
         img_result = self.dset.images[idx]
-        img = Image.open(img_result.full_path)
+        pil_img = Image.open(img_result.full_path).convert("RGB")
+        img = tv.tv_tensors.Image(pil_img)
 
         # Build target dict
+        h, w = img.shape[1:]
         target = {
-            "boxes": torch.tensor(
-                [bbox.xyxyn for bbox in img_result.bboxes], dtype=torch.float32
+            "boxes": tv.tv_tensors.BoundingBoxes(
+                [xyxyn_to_xyxy(bb.xyxyn, (w, h)) for bb in img_result.bboxes],
+                format=tv.tv_tensors.BoundingBoxFormat.XYXY,
+                canvas_size=(h, w),
             ),
             "labels": torch.tensor(
-                [
-                    self.dset.categories.index(bbox.category)
-                    for bbox in img_result.bboxes
-                ],
+                [self.category2idx[bbox.category] for bbox in img_result.bboxes],
                 dtype=torch.int64,
             ),
             "image_id": idx,
             "file": img_result.file,
+            "image_result": img_result,
         }
 
         if self.transform:
