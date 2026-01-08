@@ -15,6 +15,7 @@ from IPython.display import display
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
+from torchvision.transforms import v2 as transforms  # type: ignore
 from ultralytics.engine.results import Results
 
 import tt
@@ -332,6 +333,15 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
 
         return img, target
 
+    @staticmethod
+    def collate_fn(
+        batch: list[tuple[tv.tv_tensors.Image, dict[str, Any]]],
+    ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
+        """For use with Dataloader - keep targets as a list"""
+        images = torch.stack([item[0] for item in batch])
+        targets = [item[1] for item in batch]
+        return images, targets
+
 
 # BBox utils
 
@@ -466,6 +476,31 @@ def plot_bb_inplace(
         xyxy = xyxyn_to_xyxy(bbox.xyxyn, img.size)
         draw.rectangle(((xyxy[0], xyxy[1]), (xyxy[2], xyxy[3])), outline=color, width=2)
         draw.text((xyxy[0] + 4, xyxy[1] + 2), bbox.category, fill=color, font_size=16)
+
+
+def torch_plot_bb(
+    img: tv.tv_tensors.Image,
+    target: dict[str, Any],
+    categories: list[str],
+    return_pil: bool = False,
+) -> torch.Tensor | Image.Image:
+    labels = [categories[i] for i in target["labels"]]
+    color_set = tt.Colors().get_rgb()
+    color_map = {categories[i]: color_set[i] for i in range(len(categories))}
+    colors = [color_map[label] for label in labels]
+    result: torch.Tensor = tv.utils.draw_bounding_boxes(
+        img,
+        boxes=target["boxes"],
+        labels=labels,
+        colors=colors,
+        width=2,
+        font="/System/Library/Fonts/Helvetica.ttc",  # macOS
+        font_size=20,
+    )
+    if return_pil:
+        pil_img: Image.Image = transforms.functional.to_pil_image(result)
+        return pil_img
+    return result
 
 
 class InferViewer[T]:
