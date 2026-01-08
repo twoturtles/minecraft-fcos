@@ -98,7 +98,7 @@ class Colors:
     )
 
     def get_rgb(self, scheme: str = "category20") -> list[tuple[int, int, int]]:
-        """Get a color scheme as a tuple of RGB tuples."""
+        """Get a color scheme as a list of RGB tuples."""
         # Convert each hex color to RGB tuple
         rgb_colors: list[tuple[int, int, int]] = []
         for h in self.hex_split(scheme):

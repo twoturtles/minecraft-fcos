@@ -15,6 +15,7 @@ from IPython.display import display
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
+from torchvision import tv_tensors
 from torchvision.transforms import v2 as transforms  # type: ignore
 from ultralytics.engine.results import Results
 
@@ -302,17 +303,17 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
     def __len__(self) -> int:
         return len(self.dset.images)
 
-    def __getitem__(self, idx: int) -> tuple[tv.tv_tensors.Image, dict[str, Any]]:
+    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
         img_result = self.dset.images[idx]
         pil_img = Image.open(img_result.full_path).convert("RGB")
-        img = tv.tv_tensors.Image(pil_img)
+        img = tv_tensors.Image(pil_img)
 
         # Build target dict
         h, w = img.shape[1:]
         boxes_data = [xyxyn_to_xyxy(bb.xyxyn, (w, h)) for bb in img_result.bboxes]
-        boxes = tv.tv_tensors.BoundingBoxes(
+        boxes = tv_tensors.BoundingBoxes(
             boxes_data if boxes_data else torch.zeros((0, 4)),
-            format=tv.tv_tensors.BoundingBoxFormat.XYXY,
+            format=tv_tensors.BoundingBoxFormat.XYXY,
             canvas_size=(h, w),
         )
         labels = torch.tensor(
@@ -335,7 +336,7 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
 
     @staticmethod
     def collate_fn(
-        batch: list[tuple[tv.tv_tensors.Image, dict[str, Any]]],
+        batch: list[tuple[tv_tensors.Image, dict[str, Any]]],
     ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
         """For use with Dataloader - keep targets as a list"""
         images = torch.stack([item[0] for item in batch])
@@ -479,7 +480,7 @@ def plot_bb_inplace(
 
 
 def torch_plot_bb(
-    img: tv.tv_tensors.Image,
+    img: tv_tensors.Image,
     target: dict[str, Any],
     categories: list[str],
     return_pil: bool = False,
