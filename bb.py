@@ -323,6 +323,62 @@ class Dataset(BaseModel):
             f"Exported {len(self.images)} images to ImageFolder format at {output_dir}"
         )
 
+    def to_coco(self, output_dir: Path | str) -> None:
+        """Export dataset to COCO format.
+
+        Output structure:
+            output_dir/
+            ├── images/
+            │   ├── 001.png
+            │   └── ...
+            └── annotations.json
+
+        Bounding boxes are [x, y, width, height] absolute coordinates.
+        """
+        output_dir = Path(output_dir)
+        images_dir = output_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        coco: dict[str, Any] = {
+            "images": [],
+            "annotations": [],
+            "categories": [
+                {"id": i, "name": name} for i, name in enumerate(self.categories)
+            ],
+        }
+        cat_map = {name: i for i, name in enumerate(self.categories)}
+        annotation_id = 0
+
+        for image_id, image_result in enumerate(self.images):
+            src_path = image_result.full_path
+            dst_name = Path(image_result.file).name
+            dst_path = images_dir / dst_name
+            shutil.copy2(src_path, dst_path)
+
+            with Image.open(src_path) as img:
+                width, height = img.size
+
+            coco["images"].append({
+                "id": image_id,
+                "file_name": dst_name,
+                "width": width,
+                "height": height,
+            })
+
+            for bbox in image_result.bboxes:
+                coco["annotations"].append({
+                    "id": annotation_id,
+                    "image_id": image_id,
+                    "category_id": cat_map[bbox.category],
+                    "bbox": xyxyn_to_coco(bbox.xyxyn, (width, height)),
+                })
+                annotation_id += 1
+
+        with open(output_dir / "annotations.json", "w") as f:
+            json.dump(coco, f, indent=2)
+
+        LOG.info(f"Exported {len(self.images)} images to COCO format at {output_dir}")
+
 
 #
 # Torch dataset
