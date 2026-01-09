@@ -1,6 +1,7 @@
 """Bounding Boxes"""
 
 import copy
+import json
 import logging
 import random
 import shutil
@@ -277,6 +278,50 @@ class Dataset(BaseModel):
             yaml.dump(yaml_data, f)
 
         LOG.info(f"Exported {len(self.images)} images to YOLO format at {output_dir}")
+
+    def to_hf_imagefolder(self, output_dir: Path | str) -> None:
+        """Export dataset to HuggingFace ImageFolder format with metadata.jsonl.
+
+        Output structure:
+            output_dir/
+            ├── images/
+            │   ├── 001.png
+            │   └── ...
+            └── metadata.jsonl
+
+        Bounding boxes are absolute xyxy coordinates.
+        Load with: load_dataset("imagefolder", data_dir="output_dir")
+        """
+        output_dir = Path(output_dir)
+        images_dir = output_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        metadata_path = output_dir / "metadata.jsonl"
+        with open(metadata_path, "w") as f:
+            for image_result in self.images:
+                src_path = image_result.full_path
+                dst_name = Path(image_result.file).name
+                dst_path = images_dir / dst_name
+                shutil.copy2(src_path, dst_path)
+
+                with Image.open(src_path) as img:
+                    size = img.size
+
+                metadata = {
+                    "file_name": f"images/{dst_name}",
+                    "objects": {
+                        "bbox": [
+                            xyxyn_to_xyxy(bbox.xyxyn, size)
+                            for bbox in image_result.bboxes
+                        ],
+                        "category": [bbox.category for bbox in image_result.bboxes],
+                    },
+                }
+                f.write(json.dumps(metadata) + "\n")
+
+        LOG.info(
+            f"Exported {len(self.images)} images to ImageFolder format at {output_dir}"
+        )
 
 
 #
