@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 from torchvision import tv_tensors
-from torchvision.transforms import v2 as transforms  # type: ignore
+from torchvision.transforms import v2  # type: ignore
 from ultralytics.engine.results import Results
 
 import tt
@@ -358,20 +358,24 @@ class Dataset(BaseModel):
             with Image.open(src_path) as img:
                 width, height = img.size
 
-            coco["images"].append({
-                "id": image_id,
-                "file_name": dst_name,
-                "width": width,
-                "height": height,
-            })
+            coco["images"].append(
+                {
+                    "id": image_id,
+                    "file_name": dst_name,
+                    "width": width,
+                    "height": height,
+                }
+            )
 
             for bbox in image_result.bboxes:
-                coco["annotations"].append({
-                    "id": annotation_id,
-                    "image_id": image_id,
-                    "category_id": cat_map[bbox.category],
-                    "bbox": xyxyn_to_coco(bbox.xyxyn, (width, height)),
-                })
+                coco["annotations"].append(
+                    {
+                        "id": annotation_id,
+                        "image_id": image_id,
+                        "category_id": cat_map[bbox.category],
+                        "bbox": xyxyn_to_coco(bbox.xyxyn, (width, height)),
+                    }
+                )
                 annotation_id += 1
 
         with open(output_dir / "annotations.json", "w") as f:
@@ -435,6 +439,59 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
 
         return img, target
 
+    @staticmethod
+    def collate_fn(
+        batch: list[tuple[tv_tensors.Image, dict[str, Any]]],
+    ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
+        """For use with Dataloader - keep targets as a list"""
+        images = torch.stack([item[0] for item in batch])
+        targets = [item[1] for item in batch]
+        return images, targets
+
+
+# Torch dataset for Minecraft data using COCO format
+class MCDataset(tv.datasets.VisionDataset):  # type: ignore
+    def __init__(
+        self,
+        root: str | Path,
+        images_subdir: str = "images",
+        ann_fname: str = "annotations.json",
+        transform: Callable[..., Any] | None = None,
+    ):
+        root = Path(root)
+        super().__init__(root=root, transform=transform)
+
+        # Internal torch coco-format dataset
+        self.coco_dataset = tv.datasets.wrap_dataset_for_transforms_v2(
+            # The transforms can be v2 since they're handled by the wrapper.
+            tv.datasets.CocoDetection(
+                root / images_subdir, root / ann_fname, transforms=v2.ToImage()
+            )
+        )
+
+        # dict[id, category name]
+        self.categories: dict[int, str] = {
+            cat["id"]: cat["name"]
+            for cat in self.coco_dataset.coco.loadCats(
+                self.coco_dataset.coco.getCatIds()
+            )
+        }
+
+    def __len__(self) -> int:
+        return len(self.coco_dataset)
+
+    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
+        item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
+        return item
+
+    # https://docs.pytorch.org/vision/main/auto_examples/transforms/plot_transforms_e2e.html
+    # We need a custom collation function here, since the object detection
+    # models expect a sequence of images and target dictionaries. The default
+    # collation function tries to torch.stack() the individual elements,
+    # which fails in general for object detection, because the number of bounding
+    # boxes varies between the images of the same batch.
+    # Alternative:
+    # collate_fn=lambda batch: tuple(zip(*batch))
     @staticmethod
     def collate_fn(
         batch: list[tuple[tv_tensors.Image, dict[str, Any]]],
@@ -600,7 +657,7 @@ def torch_plot_bb(
         font_size=20,
     )
     if return_pil:
-        pil_img: Image.Image = transforms.functional.to_pil_image(result)
+        pil_img: Image.Image = v2.functional.to_pil_image(result)
         return pil_img
     return result
 
