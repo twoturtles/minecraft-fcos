@@ -323,7 +323,7 @@ class Dataset(BaseModel):
             f"Exported {len(self.images)} images to ImageFolder format at {output_dir}"
         )
 
-    def to_coco(self, output_dir: Path | str) -> None:
+    def to_coco(self, output_dir: Path | str, add_background: bool = True) -> None:
         """Export dataset to COCO format.
 
         Output structure:
@@ -334,6 +334,7 @@ class Dataset(BaseModel):
             └── annotations.json
 
         Bounding boxes are [x, y, width, height] absolute coordinates.
+        add_background - make a __background__ class at id 0 by shifting ids up
         """
         output_dir = Path(output_dir)
         images_dir = output_dir / "images"
@@ -346,9 +347,14 @@ class Dataset(BaseModel):
                 {"id": i, "name": name} for i, name in enumerate(self.categories)
             ],
         }
-        cat_map = {name: i for i, name in enumerate(self.categories)}
-        annotation_id = 0
 
+        if add_background:
+            cat_map = {name: i + 1 for i, name in enumerate(self.categories)}
+            cat_map["__background__"] = 0
+        else:
+            cat_map = {name: i for i, name in enumerate(self.categories)}
+
+        annotation_id = 0
         for image_id, image_result in enumerate(self.images):
             src_path = image_result.full_path
             dst_name = Path(image_result.file).name
@@ -449,8 +455,9 @@ class TorchDataset(tv.datasets.VisionDataset):  # type: ignore
         return images, targets
 
 
-# Torch dataset for Minecraft data using COCO format
 class MCDataset(tv.datasets.VisionDataset):  # type: ignore
+    """Torch dataset for Minecraft data using COCO format"""
+
     def __init__(
         self,
         root: str | Path,
@@ -468,7 +475,10 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
                 root / images_subdir, root / ann_fname, transforms=v2.ToImage()
             )
         )
+        self._init_categories()
 
+    # override to shift category indices
+    def _init_categories(self) -> None:
         # dict[id, category name]
         self.id2category: dict[int, str] = {
             cat["id"]: cat["name"]
@@ -481,6 +491,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     def __len__(self) -> int:
         return len(self.coco_dataset)
 
+    # override to shift category indices
     def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
         item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
         return item
@@ -501,6 +512,24 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         images = torch.stack([item[0] for item in batch])
         targets = [item[1] for item in batch]
         return images, targets
+
+
+class FCOSDataset(MCDataset):
+    """Like MCDataset but shifts all class indices up 1. FCOS uses index 0 for the background."""
+
+    def _init_categories(self) -> None:
+        # dict[id, category name]
+        self.id2category: dict[int, str] = {
+            cat["id"]: cat["name"]
+            for cat in self.coco_dataset.coco.loadCats(
+                self.coco_dataset.coco.getCatIds()
+            )
+        }
+        self.categories = list(self.id2category.values())
+
+    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
+        item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
+        return item
 
 
 class MCDataLoader(torch.utils.data.DataLoader[Any]):
