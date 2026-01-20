@@ -2,14 +2,16 @@
 
 import logging
 from pathlib import Path
+from typing import TypeVar
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
-from google import genai
+import torch
 from ipydatagrid import DataGrid  # type: ignore
 from IPython.display import display
 from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image
+from torch.utils.data import Dataset, random_split
 
 LOG = logging.getLogger(__name__)
 
@@ -50,6 +52,55 @@ class LogColorFormatter(logging.Formatter):
         fmt = f"{color}{_FMT}{self.RESET}"
         formatter = logging.Formatter(fmt, datefmt=_DATEFMT)
         return formatter.format(record)
+
+
+##
+# Torch
+
+_T = TypeVar("_T")
+
+
+def seed(seed: int) -> None:
+    """Set global seeds"""
+    import random
+
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+def get_torch_device(print_device: bool = True) -> str:
+    """Get cpu, gpu, or mps device"""
+    import torch
+
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available() else "cpu"
+    )
+    print(f"Torch device: {device}")
+
+    return device
+
+
+def split1(
+    dataset: Dataset[_T], train_pct: float, seed: int
+) -> tuple[Dataset[_T], Dataset[_T]]:
+    """Simple wrap for a single split"""
+    len_dset = len(dataset)  # type: ignore[arg-type] # Dataset has __len__ at runtime
+    n_train = int(len_dset * train_pct)
+    n_valid = len_dset - n_train
+
+    train_data, valid_data = random_split(
+        dataset,
+        [n_train, n_valid],
+        generator=torch.Generator().manual_seed(seed),
+    )
+
+    return train_data, valid_data
 
 
 ##
@@ -113,17 +164,3 @@ class Colors:
         # Split into 6-character chunks
         hex_string = self.schemes[scheme]
         return [hex_string[i : i + 6] for i in range(0, len(hex_string), 6)]
-
-
-def get_torch_device(print_device: bool = True) -> str:
-    # Get cpu, gpu or mps device for training.
-    import torch
-
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
-    )
-    print(f"Torch device: {device}")
-
-    return device

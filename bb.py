@@ -470,12 +470,13 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         )
 
         # dict[id, category name]
-        self.categories: dict[int, str] = {
+        self.id2category: dict[int, str] = {
             cat["id"]: cat["name"]
             for cat in self.coco_dataset.coco.loadCats(
                 self.coco_dataset.coco.getCatIds()
             )
         }
+        self.categories = list(self.id2category.values())
 
     def __len__(self) -> int:
         return len(self.coco_dataset)
@@ -500,6 +501,12 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         images = torch.stack([item[0] for item in batch])
         targets = [item[1] for item in batch]
         return images, targets
+
+
+class MCDataLoader(torch.utils.data.DataLoader[Any]):
+    def __init__(self, *args: Any, **kwargs: Any):
+        kwargs.setdefault("collate_fn", MCDataset.collate_fn)
+        super().__init__(*args, **kwargs)
 
 
 # BBox utils
@@ -660,6 +667,23 @@ def torch_plot_bb(
         pil_img: Image.Image = v2.functional.to_pil_image(result)
         return pil_img
     return result
+
+
+def plot_bb_grid(
+    images: list[tv_tensors.Image],
+    targets: list[dict[str, Any]],
+    categories: list[str],
+    nrow: int = 4,
+) -> Image.Image:
+    result = tv.utils.make_grid(
+        [
+            torch_plot_bb(img, target, categories)
+            for img, target in zip(images, targets)
+        ],
+        nrow=nrow,
+    )
+    img: Image.Image = v2.functional.to_pil_image(result)
+    return img
 
 
 class InferViewer[T]:

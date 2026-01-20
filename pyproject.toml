@@ -22,6 +22,7 @@ dependencies = [
     "ruamel-yaml>=0.18.16",
     "supervision>=0.26.1",
     "torch>=2.9.0",
+    "torchinfo>=1.8.0",
     "torchvision>=0.24.0",
     "tqdm>=4.66.5",
     "transformers>=4.57.1",
