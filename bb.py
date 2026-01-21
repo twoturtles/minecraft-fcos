@@ -340,19 +340,16 @@ class Dataset(BaseModel):
         images_dir = output_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
 
+        categories = (
+            ["__background__"] + self.categories if add_background else self.categories
+        )
+        cat_name2id = {name: i for i, name in enumerate(categories)}
+
         coco: dict[str, Any] = {
             "images": [],
             "annotations": [],
-            "categories": [
-                {"id": i, "name": name} for i, name in enumerate(self.categories)
-            ],
+            "categories": [{"id": i, "name": name} for name, i in cat_name2id.items()],
         }
-
-        if add_background:
-            cat_map = {name: i + 1 for i, name in enumerate(self.categories)}
-            cat_map["__background__"] = 0
-        else:
-            cat_map = {name: i for i, name in enumerate(self.categories)}
 
         annotation_id = 0
         for image_id, image_result in enumerate(self.images):
@@ -378,7 +375,7 @@ class Dataset(BaseModel):
                     {
                         "id": annotation_id,
                         "image_id": image_id,
-                        "category_id": cat_map[bbox.category],
+                        "category_id": cat_name2id[bbox.category],
                         "bbox": xyxyn_to_coco(bbox.xyxyn, (width, height)),
                     }
                 )
@@ -475,10 +472,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
                 root / images_subdir, root / ann_fname, transforms=v2.ToImage()
             )
         )
-        self._init_categories()
 
-    # override to shift category indices
-    def _init_categories(self) -> None:
         # dict[id, category name]
         self.id2category: dict[int, str] = {
             cat["id"]: cat["name"]
@@ -491,7 +485,6 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     def __len__(self) -> int:
         return len(self.coco_dataset)
 
-    # override to shift category indices
     def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
         item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
         return item
@@ -512,24 +505,6 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         images = torch.stack([item[0] for item in batch])
         targets = [item[1] for item in batch]
         return images, targets
-
-
-class FCOSDataset(MCDataset):
-    """Like MCDataset but shifts all class indices up 1. FCOS uses index 0 for the background."""
-
-    def _init_categories(self) -> None:
-        # dict[id, category name]
-        self.id2category: dict[int, str] = {
-            cat["id"]: cat["name"]
-            for cat in self.coco_dataset.coco.loadCats(
-                self.coco_dataset.coco.getCatIds()
-            )
-        }
-        self.categories = list(self.id2category.values())
-
-    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
-        item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
-        return item
 
 
 class MCDataLoader(torch.utils.data.DataLoader[Any]):
