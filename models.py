@@ -4,11 +4,11 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torchvision as tv
+import torchvision as tv  # type: ignore
 from PIL import Image
 from torch.utils.data import DataLoader
-from torchvision.models.detection import fcos
-from torchvision.transforms import v2 as v2
+from torchvision.models.detection import fcos  # type: ignore
+from torchvision.transforms import v2 as v2  # type: ignore
 from tqdm.auto import tqdm, trange
 
 
@@ -19,7 +19,7 @@ class FCOSTrainer:
         *,
         categories: list[str],
         checkpoint: Path | str | None = None,
-        device="mps",
+        device: str | torch.device = "mps",
     ) -> None:
         self.categories = categories
         self.device = torch.device(device)
@@ -31,7 +31,7 @@ class FCOSTrainer:
         else:
             self._load_checkpoint(checkpoint)
 
-    def _load_pretrained(self):
+    def _load_pretrained(self) -> None:
         """Load FCOS pretrained weights."""
         print("Initializing new model")
         self.model = fcos.fcos_resnet50_fpn(
@@ -44,7 +44,7 @@ class FCOSTrainer:
         del model_state_dict["head.classification_head.cls_logits.bias"]
         self._setup_model(model_state_dict=model_state_dict)
 
-    def _load_checkpoint(self, ckpt_file: Path | str):
+    def _load_checkpoint(self, ckpt_file: Path | str) -> None:
         ckpt_file = Path(ckpt_file)
         print(f"Loading checkpoint: {ckpt_file}")
         self.model = fcos.fcos_resnet50_fpn(
@@ -77,9 +77,8 @@ class FCOSTrainer:
         self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=1e-4)
         if optimizer_state_dict is not None:
             self.optimizer.load_state_dict(optimizer_state_dict)
-            self.optimizer.to(self.device)
 
-    def save_checkpoint(self, ckpt_file: Path | str):
+    def save_checkpoint(self, ckpt_file: Path | str) -> None:
         ckpt_file = Path(ckpt_file)
         checkpoint = {
             "total_epochs": self.total_epochs,
@@ -90,7 +89,7 @@ class FCOSTrainer:
         }
         torch.save(checkpoint, ckpt_file)
 
-    def _set_requires_grad(self):
+    def _set_requires_grad(self) -> None:
         for param in self.model.parameters():
             param.requires_grad_(False)
         for param in self.model.head.classification_head.cls_logits.parameters():
@@ -112,9 +111,10 @@ class FCOSTrainer:
             font="/System/Library/Fonts/Helvetica.ttc",  # macOS
             font_size=20,
         )
-        return v2.functional.to_pil_image(box.detach())
+        ret: Image.Image = v2.functional.to_pil_image(box.detach())
+        return ret
 
-    def plot_loss(self, figsize=(8, 6)):
+    def plot_loss(self, figsize: tuple[int, int] = (8, 6)) -> None:
         plt.figure(figsize=figsize)
         train_x = np.linspace(0, self.total_epochs, len(self.loss_log))
         plt.plot(train_x, self.loss_log)
@@ -123,12 +123,12 @@ class FCOSTrainer:
         plt.ylabel("Loss")
         plt.show()
 
-    def train(self, train_loader: DataLoader, num_epochs: int) -> None:
+    def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
             self.train_one_epoch(train_loader)
             self.plot_loss(figsize=(12, 3))
 
-    def train_one_epoch(self, train_loader: DataLoader) -> None:
+    def train_one_epoch(self, train_loader: DataLoader[Any]) -> None:
         self.model.train()
 
         for images, targets in tqdm(train_loader, leave=False, desc="Batch"):
