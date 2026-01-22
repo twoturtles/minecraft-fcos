@@ -652,12 +652,20 @@ def torch_plot_bb(
     img: tv_tensors.Image,
     target: dict[str, Any],
     categories: list[str],
+    include_scores: bool = False,
     return_pil: bool = False,
 ) -> torch.Tensor | Image.Image:
-    labels = [categories[i] for i in target["labels"]]
+    cat_ids = target["labels"].tolist()
+    if include_scores:
+        labels = [
+            f"{categories[cat_ix]} {score:.2f}"
+            for cat_ix, score in zip(cat_ids, target["scores"])
+        ]
+    else:
+        labels = [categories[cat_ix] for cat_ix in cat_ids]
     color_set = tt.Colors().get_rgb()
-    color_map = {categories[i]: color_set[i] for i in range(len(categories))}
-    colors = [color_map[label] for label in labels]
+    cat_ix2color = {cat_ix: color_set[cat_ix] for cat_ix in range(len(categories))}
+    colors = [cat_ix2color[cat_ix] for cat_ix in cat_ids]
     result: torch.Tensor = tv.utils.draw_bounding_boxes(
         img,
         boxes=target["boxes"],
@@ -678,10 +686,11 @@ def plot_bb_grid(
     targets: list[dict[str, Any]],
     categories: list[str],
     nrow: int = 4,
+    include_scores: bool = False,
 ) -> Image.Image:
     result = tv.utils.make_grid(
         [
-            torch_plot_bb(img, target, categories)
+            torch_plot_bb(img, target, categories, include_scores=include_scores)
             for img, target in zip(images, targets)
         ],
         nrow=nrow,
