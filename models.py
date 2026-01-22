@@ -11,6 +11,8 @@ from torchvision.models.detection import fcos  # type: ignore
 from torchvision.transforms import v2 as v2  # type: ignore
 from tqdm.auto import tqdm, trange
 
+import bb
+
 
 class FCOSTrainer:
 
@@ -32,7 +34,12 @@ class FCOSTrainer:
             self._load_checkpoint(checkpoint)
 
     def _load_pretrained(self) -> None:
-        """Load FCOS pretrained weights."""
+        """Load FCOS pretrained weights.
+        This is expected: missing_keys=[
+            "head.classification_head.cls_logits.weight",
+            "head.classification_head.cls_logits.bias",
+        ],
+        """
         print("Initializing new model")
         self.model = fcos.fcos_resnet50_fpn(
             weights=None, weights_backbone=None, num_classes=len(self.categories)
@@ -95,23 +102,50 @@ class FCOSTrainer:
         for param in self.model.head.classification_head.cls_logits.parameters():
             param.requires_grad_(True)
 
-    def infer(self, img: tv.tv_tensors.Image) -> Image.Image:
+    def filter_pred(
+        self, pred: dict[str, Any], score_thresh: float = 0.5
+    ) -> dict[str, Any]:
+        mask = pred["scores"] >= score_thresh
+        filtered: dict[str, Any] = {}
+        for key, vals in pred.items():
+            filtered[key] = vals[mask]
+
+        return filtered
+
+    def filter_preds(
+        self, preds: list[dict[str, Any]], score_thresh: float = 0.5
+    ) -> list[dict[str, Any]]:
+        return [self.filter_pred(pred, score_thresh) for pred in preds]
+
+    def infer(
+        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
+    ) -> dict[str, Any]:
         self.model.eval()
         img = img.to(self.device)
         batch = [self.preprocess(img)]
         with torch.inference_mode():
-            prediction = self.model(batch)[0]
-        labels = [self.categories[i] for i in prediction["labels"]]
-        box = tv.utils.draw_bounding_boxes(
-            img,
-            boxes=prediction["boxes"],
-            labels=labels,
-            colors="red",
-            width=4,
-            font="/System/Library/Fonts/Helvetica.ttc",  # macOS
-            font_size=20,
+            pred: dict[str, Any] = self.model(batch)[0]
+        pred = self.filter_pred(pred, score_thresh)
+        return pred
+
+    def forward(
+        self, batch: torch.Tensor, score_thresh: float = 0.5
+    ) -> list[dict[str, Any]]:
+        self.model.eval()
+        batch = self.preprocess(batch.to(self.device))
+        with torch.inference_mode():
+            preds: list[dict[str, Any]] = self.model(batch)
+        preds = self.filter_preds(preds, score_thresh)
+        return preds
+
+    def plot_infer(
+        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
+    ) -> Image.Image:
+        pred = self.infer(img, score_thresh)
+        ret = bb.torch_plot_bb(
+            img, pred, self.categories, include_scores=True, return_pil=True
         )
-        ret: Image.Image = v2.functional.to_pil_image(box.detach())
+        assert isinstance(ret, Image.Image)
         return ret
 
     def plot_loss(self, figsize: tuple[int, int] = (8, 6)) -> None:
@@ -160,3 +194,21 @@ class FCOSTrainer:
             self.optimizer.step()
 
         self.total_epochs += 1
+
+
+def compare_models(
+    m0: torch.nn.Module, m1: torch.nn.Module, exact: bool = True
+) -> bool:
+    """Check if two models have identical parameters."""
+    sd0 = m0.state_dict()
+    sd1 = m1.state_dict()
+
+    if sd0.keys() != sd1.keys():
+        return False
+
+    check_fn = torch.equal if exact else torch.allclose
+    for key in sd0:
+        if not check_fn(sd0[key], sd1[key]):
+            print(f"Mismatch at: {key}")
+            return False
+    return True
