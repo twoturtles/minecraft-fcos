@@ -29,10 +29,6 @@ class FCOSTrainer:
         self.categories = categories
         self.device = torch.device(device)
 
-        # Loss plot
-        self._loss_fig, self._loss_ax = plt.subplots()
-        self._plot_handle = None
-
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
         if checkpoint is None:
@@ -175,6 +171,9 @@ class FCOSTrainer:
         return ret
 
     def plot_loss(self, figsize: tuple[int, int] = (8, 6)) -> None:
+        if self._plot_handle is None:
+            self._loss_fig, self._loss_ax = plt.subplots()
+            self._plot_handle = display(self._loss_fig, display_id=True)
         self._loss_fig.set_size_inches(figsize)
         self._loss_ax.clear()
 
@@ -183,15 +182,14 @@ class FCOSTrainer:
         self._loss_ax.set_title("Training Loss")
         self._loss_ax.set_xlabel("Epoch")
         self._loss_ax.set_ylabel("Loss")
-        if self._plot_handle is None:
-            self._plot_handle = display(self._loss_fig, display_id=True)  # type: ignore
-        else:
-            self._plot_handle.update(self._loss_fig)
+        self._plot_handle.update(self._loss_fig)
 
     def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
+        self._plot_handle = None
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
             self.train_one_epoch(train_loader)
             self.plot_loss(figsize=(12, 3))
+        plt.close(self._loss_fig)
 
     def train_one_epoch(self, train_loader: DataLoader[Any]) -> None:
         self.model.train()
