@@ -186,6 +186,7 @@ class FCOSTrainer:
         """One-off plot display."""
         fig = self._plot_loss(figsize)
         plt.show()
+        plt.close(fig)
 
     def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
         """Train with live-updating plot."""
