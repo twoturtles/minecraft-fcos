@@ -7,6 +7,7 @@ import torch
 import torchvision as tv  # type: ignore
 from PIL import Image
 from torch.utils.data import DataLoader
+from torchmetrics.detection import MeanAveragePrecision
 from torchvision.models.detection import fcos  # type: ignore
 from torchvision.transforms import v2 as v2  # type: ignore
 from tqdm.auto import tqdm, trange
@@ -22,6 +23,7 @@ class FCOSTrainer:
         categories: list[str],
         checkpoint: Path | str | None = None,
         device: str | torch.device = "mps",
+        he_init: bool = True,
     ) -> None:
         self.categories = categories
         self.device = torch.device(device)
@@ -29,26 +31,45 @@ class FCOSTrainer:
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
         if checkpoint is None:
-            self._load_pretrained()
+            self._load_pretrained(he_init=he_init)
         else:
             self._load_checkpoint(checkpoint)
 
-    def _load_pretrained(self) -> None:
+    def _load_pretrained(self, he_init: bool = True) -> None:
         """Load FCOS pretrained weights.
         This is expected: missing_keys=[
             "head.classification_head.cls_logits.weight",
             "head.classification_head.cls_logits.bias",
         ],
+        he_init - Use He Kaiming init rather than standard FCOS init
         """
         print("Initializing new model")
+        # FCOS init
         self.model = fcos.fcos_resnet50_fpn(
             weights=None, weights_backbone=None, num_classes=len(self.categories)
         )
+        # Load pretrained
         model_state_dict = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.get_state_dict(
             progress=True, check_hash=True
         )
-        del model_state_dict["head.classification_head.cls_logits.weight"]
-        del model_state_dict["head.classification_head.cls_logits.bias"]
+
+        # Set up classification head init
+        if he_init:
+            num_classes = len(self.categories)
+            # Original: Conv2d(256, 91, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+            cls_logits = torch.nn.Conv2d(
+                256, num_classes, kernel_size=3, stride=1, padding=1
+            )
+            state = cls_logits.state_dict()
+            model_state_dict["head.classification_head.cls_logits.weight"] = state[
+                "weight"
+            ]
+            model_state_dict["head.classification_head.cls_logits.bias"] = state["bias"]
+        else:
+            # Don't try to apply 91 class init to our model head. Leave FCOS init.
+            del model_state_dict["head.classification_head.cls_logits.weight"]
+            del model_state_dict["head.classification_head.cls_logits.bias"]
+
         self._setup_model(model_state_dict=model_state_dict)
 
     def _load_checkpoint(self, ckpt_file: Path | str) -> None:
@@ -194,6 +215,28 @@ class FCOSTrainer:
             self.optimizer.step()
 
         self.total_epochs += 1
+
+    def evaluate(self, val_loader: DataLoader[Any]) -> dict:
+        self.model.eval()
+        metric = MeanAveragePrecision(iou_type="bbox")
+
+        with torch.inference_mode():
+            for images, targets in val_loader:
+                images = images.to(self.device)
+                batch = self.preprocess(images)
+                preds = self.model(batch)
+
+                # Format targets to match predictions
+                targets = [
+                    {
+                        "boxes": t["boxes"].to(self.device),
+                        "labels": t["labels"].to(self.device),
+                    }
+                    for t in targets
+                ]
+                metric.update(preds, targets)
+
+        return metric.compute()
 
 
 def compare_models(
