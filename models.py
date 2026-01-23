@@ -141,7 +141,7 @@ class FCOSTrainer:
         return [self.filter_pred(pred, score_thresh) for pred in preds]
 
     def infer(
-        self, img: tv.tv_tensors.Image, score_thresh: float = 0.0
+        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
     ) -> dict[str, Any]:
         self.model.eval()
         img = img.to(self.device)
@@ -152,7 +152,7 @@ class FCOSTrainer:
         return pred
 
     def forward(
-        self, batch: torch.Tensor, score_thresh: float = 0.0
+        self, batch: torch.Tensor, score_thresh: float = 0.5
     ) -> list[dict[str, Any]]:
         self.model.eval()
         batch = self.preprocess(batch.to(self.device))
@@ -162,7 +162,7 @@ class FCOSTrainer:
         return preds
 
     def plot_infer(
-        self, img: tv.tv_tensors.Image, score_thresh: float = 0.0
+        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
     ) -> Image.Image:
         pred = self.infer(img, score_thresh)
         ret = bb.torch_plot_bb(
