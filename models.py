@@ -4,6 +4,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torchmetrics
 import torchvision as tv  # type: ignore
 from IPython.display import display
 from PIL import Image
@@ -140,7 +141,7 @@ class FCOSTrainer:
         return [self.filter_pred(pred, score_thresh) for pred in preds]
 
     def infer(
-        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
+        self, img: tv.tv_tensors.Image, score_thresh: float = 0.0
     ) -> dict[str, Any]:
         self.model.eval()
         img = img.to(self.device)
@@ -151,7 +152,7 @@ class FCOSTrainer:
         return pred
 
     def forward(
-        self, batch: torch.Tensor, score_thresh: float = 0.5
+        self, batch: torch.Tensor, score_thresh: float = 0.0
     ) -> list[dict[str, Any]]:
         self.model.eval()
         batch = self.preprocess(batch.to(self.device))
@@ -161,7 +162,7 @@ class FCOSTrainer:
         return preds
 
     def plot_infer(
-        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
+        self, img: tv.tv_tensors.Image, score_thresh: float = 0.0
     ) -> Image.Image:
         pred = self.infer(img, score_thresh)
         ret = bb.torch_plot_bb(
@@ -191,7 +192,7 @@ class FCOSTrainer:
     def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
         """Train with live-updating plot."""
         fig = self._plot_loss()
-        handle = display(fig, display_id=True)
+        handle = display(fig, display_id=True)  # type: ignore
         plt.close(fig)
 
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
@@ -200,21 +201,25 @@ class FCOSTrainer:
             handle.update(fig)
             plt.close(fig)
 
+    def _fixup_targets(self, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Handle images with no boxes and move to device."""
+        fixed = [
+            {
+                "boxes": t.get("boxes", torch.zeros(0, 4)).to(self.device),
+                "labels": t.get("labels", torch.zeros(0, dtype=torch.int64)).to(
+                    self.device
+                ),
+            }
+            for t in targets
+        ]
+        return fixed
+
     def train_one_epoch(self, train_loader: DataLoader[Any]) -> None:
         self.model.train()
 
         for images, targets in tqdm(train_loader, leave=False, desc="Batch"):
             images = images.to(self.device)
-            targets = [
-                {
-                    # Handle images with no boxes
-                    "boxes": t.get("boxes", torch.zeros(0, 4)).to(self.device),
-                    "labels": t.get("labels", torch.zeros(0, dtype=torch.int64)).to(
-                        self.device
-                    ),
-                }
-                for t in targets
-            ]
+            targets = self._fixup_targets(targets)
 
             # Forward pass of image through network and get output
             batch = self.preprocess(images)
@@ -233,27 +238,19 @@ class FCOSTrainer:
 
         self.total_epochs += 1
 
-    def evaluate(self, val_loader: DataLoader[Any]) -> dict:
+    def evaluate(self, val_loader: DataLoader[Any]) -> torchmetrics.Metric:
         self.model.eval()
         metric = MeanAveragePrecision(iou_type="bbox")
 
         with torch.inference_mode():
             for images, targets in val_loader:
                 images = images.to(self.device)
+                targets = self._fixup_targets(targets)
                 batch = self.preprocess(images)
                 preds = self.model(batch)
-
-                # Format targets to match predictions
-                targets = [
-                    {
-                        "boxes": t["boxes"].to(self.device),
-                        "labels": t["labels"].to(self.device),
-                    }
-                    for t in targets
-                ]
                 metric.update(preds, targets)
 
-        return metric.compute()
+        return {"metric": metric, "images": images, "preds": preds, "targets": targets}
 
 
 def compare_models(
