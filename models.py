@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torchvision as tv  # type: ignore
+from IPython.display import display
 from PIL import Image
 from torch.utils.data import DataLoader
 from torchmetrics.detection import MeanAveragePrecision
@@ -27,6 +28,10 @@ class FCOSTrainer:
     ) -> None:
         self.categories = categories
         self.device = torch.device(device)
+
+        # Loss plot
+        self._loss_fig, self._loss_ax = plt.subplots()
+        self._plot_handle = None
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
@@ -170,13 +175,18 @@ class FCOSTrainer:
         return ret
 
     def plot_loss(self, figsize: tuple[int, int] = (8, 6)) -> None:
-        plt.figure(figsize=figsize)
+        self._loss_fig.set_size_inches(figsize)
+        self._loss_ax.clear()
+
         train_x = np.linspace(0, self.total_epochs, len(self.loss_log))
-        plt.plot(train_x, self.loss_log)
-        plt.title("Training Loss")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-        plt.show()
+        self._loss_ax.plot(train_x, self.loss_log)
+        self._loss_ax.set_title("Training Loss")
+        self._loss_ax.set_xlabel("Epoch")
+        self._loss_ax.set_ylabel("Loss")
+        if self._plot_handle is None:
+            self._plot_handle = display(self._loss_fig, display_id=True)  # type: ignore
+        else:
+            self._plot_handle.update(self._loss_fig)
 
     def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
