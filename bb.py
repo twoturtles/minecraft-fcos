@@ -506,6 +506,110 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         targets = [item[1] for item in batch]
         return images, targets
 
+    def to_df(self) -> pd.DataFrame:
+        """Convert dataset to DataFrame with absolute xyxy coords.
+        Images without annotations get a row with None for bbox fields.
+        """
+        coco = self.coco_dataset.coco
+        rows = []
+        for img_idx, img_id in enumerate(coco.getImgIds()):
+            img_info = coco.loadImgs(img_id)[0]
+            file_name = img_info["file_name"]
+            anns = coco.loadAnns(coco.getAnnIds(imgIds=img_id))
+
+            if not anns:
+                rows.append(
+                    {
+                        "image_idx": img_idx,
+                        "file": file_name,
+                        "category": None,
+                        "x1": None,
+                        "y1": None,
+                        "x2": None,
+                        "y2": None,
+                    }
+                )
+            else:
+                for ann in anns:
+                    xyxy = coco_to_xyxy(ann["bbox"])
+                    rows.append(
+                        {
+                            "image_idx": img_idx,
+                            "file": file_name,
+                            "category": self.id2category[ann["category_id"]],
+                            "x1": xyxy[0],
+                            "y1": xyxy[1],
+                            "x2": xyxy[2],
+                            "y2": xyxy[3],
+                        }
+                    )
+        return pd.DataFrame(
+            rows, columns=["image_idx", "file", "category", "x1", "y1", "x2", "y2"]
+        )
+
+    def dataset_stats(self) -> pd.Series:
+        """Calculate useful statistics from dataset.
+        Returns: pd.Series with dataset statistics
+        """
+        df = self.to_df()
+        stats: dict[str, Any] = {}
+
+        # Basic counts
+        stats["num_images"] = df["image_idx"].nunique()
+        stats["num_bboxes"] = df["category"].notna().sum()
+        stats["avg_bboxes_per_image"] = (
+            stats["num_bboxes"] / stats["num_images"] if stats["num_images"] > 0 else 0.0
+        )
+
+        # Category statistics
+        stats["num_categories"] = df["category"].nunique()
+        category_counts = df["category"].value_counts()
+        stats["most_common_category"] = (
+            category_counts.index[0] if len(category_counts) > 0 else None
+        )
+        stats["least_common_category"] = (
+            category_counts.index[-1] if len(category_counts) > 0 else None
+        )
+
+        # Bounding box size statistics (absolute coordinates)
+        if stats["num_bboxes"] > 0:
+            df["width"] = df["x2"] - df["x1"]
+            df["height"] = df["y2"] - df["y1"]
+            df["area"] = df["width"] * df["height"]
+
+            stats["avg_bbox_width"] = df["width"].mean()
+            stats["avg_bbox_height"] = df["height"].mean()
+            stats["avg_bbox_area"] = df["area"].mean()
+            stats["min_bbox_area"] = df["area"].min()
+            stats["max_bbox_area"] = df["area"].max()
+
+        return pd.Series(stats)
+
+    def category_stats(self) -> pd.DataFrame:
+        """Get detailed statistics per category.
+        Returns: DataFrame with per-category statistics
+        """
+        df = self.to_df()
+        if len(df) == 0:
+            return pd.DataFrame()
+
+        df["width"] = df["x2"] - df["x1"]
+        df["height"] = df["y2"] - df["y1"]
+        df["area"] = df["width"] * df["height"]
+
+        stats = (
+            df.groupby("category")
+            .agg(
+                count=("category", "size"),
+                avg_width=("width", "mean"),
+                avg_height=("height", "mean"),
+                avg_area=("area", "mean"),
+            )
+            .round(4)
+        )
+
+        return stats.sort_values("count", ascending=False)
+
 
 class MCDataLoader(torch.utils.data.DataLoader[Any]):
     def __init__(self, *args: Any, **kwargs: Any):
