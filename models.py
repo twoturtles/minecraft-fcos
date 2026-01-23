@@ -170,26 +170,34 @@ class FCOSTrainer:
         assert isinstance(ret, Image.Image)
         return ret
 
-    def plot_loss(self, figsize: tuple[int, int] = (8, 6)) -> None:
-        if self._plot_handle is None:
-            self._loss_fig, self._loss_ax = plt.subplots()
-            self._plot_handle = display(self._loss_fig, display_id=True)
-        self._loss_fig.set_size_inches(figsize)
-        self._loss_ax.clear()
+    def _plot_loss(self, figsize: tuple[int, int] = (12, 3)) -> plt.Figure:
+        """Create loss figure. Returns figure for caller to display/handle."""
+        fig, ax = plt.subplots()
+        fig.set_size_inches(figsize)
 
         train_x = np.linspace(0, self.total_epochs, len(self.loss_log))
-        self._loss_ax.plot(train_x, self.loss_log)
-        self._loss_ax.set_title("Training Loss")
-        self._loss_ax.set_xlabel("Epoch")
-        self._loss_ax.set_ylabel("Loss")
-        self._plot_handle.update(self._loss_fig)
+        ax.plot(train_x, self.loss_log)
+        ax.set_title("Training Loss")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        return fig
+
+    def plot_loss(self, figsize: tuple[int, int] = (12, 3)) -> None:
+        """One-off plot display."""
+        fig = self._plot_loss(figsize)
+        plt.show()
 
     def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
-        self._plot_handle = None
+        """Train with live-updating plot."""
+        fig = self._plot_loss()
+        handle = display(fig, display_id=True)
+        plt.close(fig)
+
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
             self.train_one_epoch(train_loader)
-            self.plot_loss(figsize=(12, 3))
-        plt.close(self._loss_fig)
+            fig = self._plot_loss()
+            handle.update(fig)
+            plt.close(fig)
 
     def train_one_epoch(self, train_loader: DataLoader[Any]) -> None:
         self.model.train()
