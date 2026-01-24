@@ -340,10 +340,10 @@ class Dataset(BaseModel):
         images_dir = output_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        categories = (
-            ["__background__"] + self.categories if add_background else self.categories
-        )
-        cat_name2id = {name: i for i, name in enumerate(categories)}
+        if add_background:
+            cat_name2id = {name: i + 1 for i, name in enumerate(self.categories)}
+        else:
+            cat_name2id = {name: i for i, name in enumerate(self.categories)}
 
         coco: dict[str, Any] = {
             "images": [],
@@ -558,7 +558,9 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         stats["num_images"] = df["image_idx"].nunique()
         stats["num_bboxes"] = df["category"].notna().sum()
         stats["avg_bboxes_per_image"] = (
-            stats["num_bboxes"] / stats["num_images"] if stats["num_images"] > 0 else 0.0
+            stats["num_bboxes"] / stats["num_images"]
+            if stats["num_images"] > 0
+            else 0.0
         )
 
         # Category statistics
