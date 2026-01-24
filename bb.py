@@ -6,7 +6,7 @@ import logging
 import random
 import shutil
 from pathlib import Path
-from typing import Annotated, Any, Callable, Iterator, Self, Sequence
+from typing import Annotated, Any, Callable, Iterator, Mapping, Self, Sequence
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
@@ -756,7 +756,7 @@ def plot_bb_inplace(
 
 def torch_plot_bb(
     img: tv_tensors.Image,
-    target: dict[str, Any],
+    target: Mapping[str, Any],
     categories: list[str],
     include_scores: bool = False,
     return_pil: bool = False,

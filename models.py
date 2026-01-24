@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,6 +17,12 @@ from tqdm.auto import tqdm, trange
 import bb
 
 
+class Detection(TypedDict):
+    boxes: torch.Tensor
+    scores: torch.Tensor
+    labels: torch.Tensor
+
+
 class FCOSTrainer:
 
     def __init__(
@@ -28,6 +34,7 @@ class FCOSTrainer:
         he_init: bool = True,
     ) -> None:
         self.categories = categories
+        self.num_categories = len(categories)
         self.device = torch.device(device)
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
@@ -48,7 +55,9 @@ class FCOSTrainer:
         print("Initializing new model")
         # FCOS init
         self.model = fcos.fcos_resnet50_fpn(
-            weights=None, weights_backbone=None, num_classes=len(self.categories)
+            weights=None,
+            weights_backbone=None,
+            num_classes=self.num_categories,
         )
         # Load pretrained
         model_state_dict = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.get_state_dict(
@@ -57,10 +66,9 @@ class FCOSTrainer:
 
         # Set up classification head init
         if he_init:
-            num_classes = len(self.categories)
             # Original: Conv2d(256, 91, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
             cls_logits = torch.nn.Conv2d(
-                256, num_classes, kernel_size=3, stride=1, padding=1
+                256, self.num_categories, kernel_size=3, stride=1, padding=1
             )
             state = cls_logits.state_dict()
             model_state_dict["head.classification_head.cls_logits.weight"] = state[
@@ -78,7 +86,9 @@ class FCOSTrainer:
         ckpt_file = Path(ckpt_file)
         print(f"Loading checkpoint: {ckpt_file}")
         self.model = fcos.fcos_resnet50_fpn(
-            weights=None, weights_backbone=None, num_classes=len(self.categories)
+            weights=None,
+            weights_backbone=None,
+            num_classes=self.num_categories,
         )
         ckpt = torch.load(ckpt_file, weights_only=True)
         self._setup_model(
@@ -86,6 +96,7 @@ class FCOSTrainer:
             optimizer_state_dict=ckpt["optimizer_state_dict"],
             total_epochs=ckpt["total_epochs"],
             loss_log=ckpt["loss_log"],
+            eval_log=ckpt.get("eval_log"),
         )
 
     def _setup_model(
@@ -95,9 +106,11 @@ class FCOSTrainer:
         optimizer_state_dict: dict[str, Any] | None = None,
         total_epochs: int = 0,
         loss_log: list[float] | None = None,
+        eval_log: list[dict[str, Any]] | None = None,
     ) -> None:
         self.total_epochs = total_epochs
-        self.loss_log = loss_log if loss_log else []
+        self.loss_log = loss_log if loss_log else []  # Per-iteration
+        self.eval_log = eval_log if eval_log else []  # Per-epoch
 
         err_keys = self.model.load_state_dict(model_state_dict, strict=False)
         print(f"err_keys = {err_keys}")
@@ -116,6 +129,7 @@ class FCOSTrainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             # "scheduler_state_dict": scheduler.state_dict(),
             "loss_log": self.loss_log,
+            "eval_log": self.eval_log,
         }
         torch.save(checkpoint, ckpt_file)
 
@@ -125,46 +139,51 @@ class FCOSTrainer:
         for param in self.model.head.classification_head.cls_logits.parameters():
             param.requires_grad_(True)
 
-    def filter_pred(
-        self, pred: dict[str, Any], score_thresh: float = 0.5
-    ) -> dict[str, Any]:
-        mask = pred["scores"] >= score_thresh
-        filtered: dict[str, Any] = {}
-        for key, vals in pred.items():
-            filtered[key] = vals[mask]
+    def topk_preds(self, preds: list[Detection], k: int) -> list[Detection]:
+        """Filter predictions by top-k."""
+        filtered_preds: list[Detection] = []
+        for pred in preds:
+            boxes, scores, labels = pred["boxes"], pred["scores"], pred["labels"]
+            topk_scores, topk_indices = torch.topk(scores, k=min(k, len(scores)))
+            filtered_pred: Detection = {
+                "boxes": boxes[topk_indices],
+                "scores": topk_scores,
+                "labels": labels[topk_indices],
+            }
+            filtered_preds.append(filtered_pred)
+        return filtered_preds
 
-        return filtered
+    def filter_preds(self, preds: list[Detection], thresh: float) -> list[Detection]:
+        """Filter predictions by score threshold."""
+        filtered_preds: list[Detection] = []
+        for pred in preds:
+            boxes, scores, labels = pred["boxes"], pred["scores"], pred["labels"]
+            mask = scores >= thresh
+            filtered_pred: Detection = {
+                "boxes": boxes[mask],
+                "scores": scores[mask],
+                "labels": labels[mask],
+            }
+            filtered_preds.append(filtered_pred)
+        return filtered_preds
 
-    def filter_preds(
-        self, preds: list[dict[str, Any]], score_thresh: float = 0.5
-    ) -> list[dict[str, Any]]:
-        return [self.filter_pred(pred, score_thresh) for pred in preds]
+    def infer(self, img: tv.tv_tensors.Image) -> Detection:
+        batch = img.unsqueeze(0)
+        return self.forward(batch)[0]
 
-    def infer(
-        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
-    ) -> dict[str, Any]:
-        self.model.eval()
-        img = img.to(self.device)
-        batch = [self.preprocess(img)]
-        with torch.inference_mode():
-            pred: dict[str, Any] = self.model(batch)[0]
-        pred = self.filter_pred(pred, score_thresh)
-        return pred
-
-    def forward(
-        self, batch: torch.Tensor, score_thresh: float = 0.5
-    ) -> list[dict[str, Any]]:
+    def forward(self, batch: torch.Tensor) -> list[Detection]:
         self.model.eval()
         batch = self.preprocess(batch.to(self.device))
         with torch.inference_mode():
-            preds: list[dict[str, Any]] = self.model(batch)
-        preds = self.filter_preds(preds, score_thresh)
+            preds: list[Detection] = self.model(batch)
         return preds
 
     def plot_infer(
-        self, img: tv.tv_tensors.Image, score_thresh: float = 0.5
+        self, img: tv.tv_tensors.Image, topk: int | None = None
     ) -> Image.Image:
-        pred = self.infer(img, score_thresh)
+        pred = self.infer(img)
+        if topk != None:
+            pred = self.topk_preds([pred], k=topk)[0]
         ret = bb.torch_plot_bb(
             img, pred, self.categories, include_scores=True, return_pil=True
         )
@@ -183,22 +202,64 @@ class FCOSTrainer:
         ax.set_ylabel("Loss")
         return fig
 
+    def _plot_eval(
+        self, keys: list[str] | None = None, figsize: tuple[int, int] = (12, 3)
+    ) -> plt.Figure:
+        """Create eval figure. Returns figure for caller to display/handle."""
+        if keys is None:
+            keys = ["map", "map_50", "map_75", "mar_100"]
+        fig, ax = plt.subplots()
+        fig.set_size_inches(figsize)
+
+        for key in keys:
+            ax.plot(
+                range(1, len(self.eval_log) + 1),
+                [e[key] for e in self.eval_log],
+                label=key,
+            )
+        ax.set_title("Evals")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Metric Value")
+        ax.legend()
+        return fig
+
     def plot_loss(self, figsize: tuple[int, int] = (12, 3)) -> None:
         """One-off plot display."""
         fig = self._plot_loss(figsize)
         plt.show()
         plt.close(fig)
 
-    def train(self, train_loader: DataLoader[Any], num_epochs: int) -> None:
+    def plot_eval(
+        self, keys: list[str] | None = None, figsize: tuple[int, int] = (12, 3)
+    ) -> None:
+        """One-off plot display."""
+        fig = self._plot_eval(keys=keys, figsize=figsize)
+        plt.show()
+        plt.close(fig)
+
+    def train(
+        self,
+        *,
+        num_epochs: int,
+        train_loader: DataLoader[Any],
+        val_loader: DataLoader[Any] | None = None,
+    ) -> None:
         """Train with live-updating plot."""
         fig = self._plot_loss()
-        handle = display(fig, display_id=True)  # type: ignore
+        loss_handle = display(fig, display_id=True)  # type: ignore
+        plt.close(fig)
+        fig = self._plot_eval()
+        eval_handle = display(fig, display_id=True)  # type: ignore
         plt.close(fig)
 
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
-            self.train_one_epoch(train_loader)
+            self.train_one_epoch(train_loader=train_loader, val_loader=val_loader)
+
             fig = self._plot_loss()
-            handle.update(fig)
+            loss_handle.update(fig)
+            plt.close(fig)
+            fig = self._plot_eval()
+            eval_handle.update(fig)
             plt.close(fig)
 
     def _fixup_targets(self, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -214,7 +275,12 @@ class FCOSTrainer:
         ]
         return fixed
 
-    def train_one_epoch(self, train_loader: DataLoader[Any]) -> None:
+    def train_one_epoch(
+        self,
+        *,
+        train_loader: DataLoader[Any],
+        val_loader: DataLoader[Any] | None = None,
+    ) -> None:
         self.model.train()
 
         for images, targets in tqdm(train_loader, leave=False, desc="Batch"):
@@ -236,21 +302,25 @@ class FCOSTrainer:
             # Do a single optimization step
             self.optimizer.step()
 
+        if val_loader is not None:
+            metrics = self.evaluate(val_loader)
+            self.eval_log.append(metrics)
+
         self.total_epochs += 1
 
-    def evaluate(self, val_loader: DataLoader[Any]) -> torchmetrics.Metric:
+    def evaluate(self, loader: DataLoader[Any]) -> dict[str, Any]:
         self.model.eval()
         metric = MeanAveragePrecision(iou_type="bbox")
 
         with torch.inference_mode():
-            for images, targets in val_loader:
+            for images, targets in tqdm(loader, leave=False, desc="Eval"):
                 images = images.to(self.device)
                 targets = self._fixup_targets(targets)
                 batch = self.preprocess(images)
                 preds = self.model(batch)
                 metric.update(preds, targets)
 
-        return {"metric": metric, "images": images, "preds": preds, "targets": targets}
+        return metric.compute()
 
 
 def compare_models(
