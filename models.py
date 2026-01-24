@@ -31,7 +31,7 @@ class FCOSTrainer:
         categories: list[str],
         checkpoint: Path | str | None = None,
         device: str | torch.device = "mps",
-        he_init: bool = True,
+        he_init: bool = False,
     ) -> None:
         self.categories = categories
         self.num_categories = len(categories)
@@ -117,7 +117,7 @@ class FCOSTrainer:
         self.model.to(self.device)
         self._set_requires_grad()
 
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=1e-4)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=1e-3)
         if optimizer_state_dict is not None:
             self.optimizer.load_state_dict(optimizer_state_dict)
 
@@ -136,7 +136,9 @@ class FCOSTrainer:
     def _set_requires_grad(self) -> None:
         for param in self.model.parameters():
             param.requires_grad_(False)
-        for param in self.model.head.classification_head.cls_logits.parameters():
+        # for param in self.model.head.classification_head.cls_logits.parameters():
+        #     param.requires_grad_(True)
+        for param in self.model.head.parameters():
             param.requires_grad_(True)
 
     def topk_preds(self, preds: list[Detection], k: int) -> list[Detection]:
