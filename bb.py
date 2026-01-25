@@ -487,7 +487,19 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
 
     def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
         item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
-        return item
+        image, target = item
+
+        # Handle images with no boxes
+        if "boxes" not in target:
+            target["boxes"] = torch.zeros(0, 4)
+        if "labels" not in target:
+            target["labels"] = torch.zeros(0, dtype=torch.int64)
+
+        boxes = target["boxes"]
+        if self.transform:
+            image, boxes = self.transform(image, boxes)
+            target["boxes"] = boxes
+        return image, target
 
     # https://docs.pytorch.org/vision/main/auto_examples/transforms/plot_transforms_e2e.html
     # We need a custom collation function here, since the object detection

@@ -32,10 +32,12 @@ class FCOSTrainer:
         checkpoint: Path | str | None = None,
         device: str | torch.device = "mps",
         he_init: bool = False,
+        lr: float | None = None,
     ) -> None:
         self.categories = categories
         self.num_categories = len(categories)
         self.device = torch.device(device)
+        self.lr = lr
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
@@ -117,9 +119,12 @@ class FCOSTrainer:
         self.model.to(self.device)
         self._set_requires_grad()
 
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=1e-3)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters())
         if optimizer_state_dict is not None:
             self.optimizer.load_state_dict(optimizer_state_dict)
+        if self.lr is not None:
+            for param_group in self.optimizer.param_groups:
+                param_group["lr"] = self.lr
 
     def save_checkpoint(self, ckpt_file: Path | str) -> None:
         ckpt_file = Path(ckpt_file)
