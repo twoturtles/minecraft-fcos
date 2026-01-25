@@ -192,20 +192,48 @@ class FCOSTrainer:
         assert isinstance(ret, Image.Image)
         return ret
 
-    def _plot_loss(self, figsize: tuple[int, int] = (12, 3)) -> plt.Figure:
+    def plot_loss(
+        self,
+        figsize: tuple[int, int] = (12, 3),
+        label: str = "",
+        epoch_range: tuple[int | None, int | None] | None = None,
+        show: bool = False,
+    ) -> plt.Figure:
         """Create loss figure. Returns figure for caller to display/handle."""
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)
 
-        train_x = np.linspace(0, self.total_epochs, len(self.loss_log))
-        ax.plot(train_x, self.loss_log)
-        ax.set_title("Training Loss")
+        if epoch_range is None:
+            iter_slice = slice(None)
+        else:
+            iters_per_epoch = len(self.loss_log) // self.total_epochs
+            start = (
+                epoch_range[0] * iters_per_epoch if epoch_range[0] is not None else None
+            )
+            end = (
+                epoch_range[1] * iters_per_epoch if epoch_range[1] is not None else None
+            )
+            iter_slice = slice(start, end)
+
+        train_x = np.linspace(0, self.total_epochs, len(self.loss_log))[iter_slice]
+        loss_log = self.loss_log[iter_slice]
+
+        ax.plot(train_x, loss_log)
+        ax.set_title(f"Training Loss {label}")
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
+        plt.close(fig)
+        if show:
+            display(fig)  # type: ignore
         return fig
 
-    def _plot_eval(
-        self, keys: list[str] | None = None, figsize: tuple[int, int] = (12, 3)
+    def plot_eval(
+        self,
+        keys: list[str] | None = None,
+        figsize: tuple[int, int] = (12, 3),
+        label: str = "",
+        epoch_range: tuple[int | None, int | None] | None = None,
+        show: bool = False,
     ) -> plt.Figure:
         """Create eval figure. Returns figure for caller to display/handle."""
         if keys is None:
@@ -213,31 +241,24 @@ class FCOSTrainer:
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)
 
+        epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
+        epochs = list(range(1, len(self.eval_log) + 1))[epoch_slice]
+        eval_log = self.eval_log[epoch_slice]
+
         for key in keys:
             ax.plot(
-                range(1, len(self.eval_log) + 1),
-                [e[key] for e in self.eval_log],
+                epochs,
+                [e[key] for e in eval_log],
                 label=key,
             )
-        ax.set_title("Evals")
+        ax.set_title(f"Evals {label}")
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Metric Value")
         ax.legend()
+        plt.close(fig)
+        if show:
+            display(fig)  # type: ignore
         return fig
-
-    def plot_loss(self, figsize: tuple[int, int] = (12, 3)) -> None:
-        """One-off plot display."""
-        fig = self._plot_loss(figsize)
-        plt.show()
-        plt.close(fig)
-
-    def plot_eval(
-        self, keys: list[str] | None = None, figsize: tuple[int, int] = (12, 3)
-    ) -> None:
-        """One-off plot display."""
-        fig = self._plot_eval(keys=keys, figsize=figsize)
-        plt.show()
-        plt.close(fig)
 
     def train(
         self,
@@ -247,22 +268,26 @@ class FCOSTrainer:
         val_loader: DataLoader[Any] | None = None,
     ) -> None:
         """Train with live-updating plot."""
-        fig = self._plot_loss()
+        fig = self.plot_loss(show=False)
         loss_handle = display(fig, display_id=True)  # type: ignore
         plt.close(fig)
-        fig = self._plot_eval()
+        fig = self.plot_eval(show=False)
         eval_handle = display(fig, display_id=True)  # type: ignore
         plt.close(fig)
 
         for epoch in trange(num_epochs, leave=True, desc="Epoch"):
             self.train_one_epoch(train_loader=train_loader, val_loader=val_loader)
 
-            fig = self._plot_loss()
+            fig = self.plot_loss(show=False)
             loss_handle.update(fig)
             plt.close(fig)
-            fig = self._plot_eval()
+            fig = self.plot_eval(show=False)
             eval_handle.update(fig)
             plt.close(fig)
+
+        print(
+            f"Final epochs={self.total_epochs} loss={self.loss_log[-1]:.4f} mAP={self.eval_log[-1]['map']:.4f}"
+        )
 
     def _fixup_targets(self, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Handle images with no boxes and move to device."""
