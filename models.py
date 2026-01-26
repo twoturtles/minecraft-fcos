@@ -4,7 +4,6 @@ from typing import Any, TypedDict
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torchmetrics
 import torchvision as tv  # type: ignore
 from IPython.display import display
 from PIL import Image
@@ -31,7 +30,6 @@ class FCOSTrainer:
         categories: list[str],
         checkpoint: Path | str | None = None,
         device: str | torch.device = "mps",
-        he_init: bool = False,
         lr: float | None = None,
     ) -> None:
         self.categories = categories
@@ -42,17 +40,16 @@ class FCOSTrainer:
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
         if checkpoint is None:
-            self._load_pretrained(he_init=he_init)
+            self._load_pretrained()
         else:
             self._load_checkpoint(checkpoint)
 
-    def _load_pretrained(self, he_init: bool = True) -> None:
+    def _load_pretrained(self) -> None:
         """Load FCOS pretrained weights.
         This is expected: missing_keys=[
             "head.classification_head.cls_logits.weight",
             "head.classification_head.cls_logits.bias",
         ],
-        he_init - Use He Kaiming init rather than standard FCOS init
         """
         print("Initializing new model")
         # FCOS init
@@ -66,21 +63,9 @@ class FCOSTrainer:
             progress=True, check_hash=True
         )
 
-        # Set up classification head init
-        if he_init:
-            # Original: Conv2d(256, 91, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-            cls_logits = torch.nn.Conv2d(
-                256, self.num_categories, kernel_size=3, stride=1, padding=1
-            )
-            state = cls_logits.state_dict()
-            model_state_dict["head.classification_head.cls_logits.weight"] = state[
-                "weight"
-            ]
-            model_state_dict["head.classification_head.cls_logits.bias"] = state["bias"]
-        else:
-            # Don't try to apply 91 class init to our model head. Leave FCOS init.
-            del model_state_dict["head.classification_head.cls_logits.weight"]
-            del model_state_dict["head.classification_head.cls_logits.bias"]
+        # Get rid of classification head weights
+        del model_state_dict["head.classification_head.cls_logits.weight"]
+        del model_state_dict["head.classification_head.cls_logits.bias"]
 
         self._setup_model(model_state_dict=model_state_dict)
 
