@@ -28,21 +28,29 @@ class FCOSTrainer:
         self,
         *,
         categories: list[str],
-        checkpoint: Path | str | None = None,
-        best_checkpoint: Path | str | None = None,
+        project_dir: Path | str,
+        load_checkpoint: Path | str | int | None = None,
         device: str | torch.device = "mps",
     ) -> None:
         self.categories = categories
         self.num_categories = len(categories)
-        self.best_checkpoint = best_checkpoint
+        self.project_dir = Path(project_dir)
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+        self.project_name = self.project_dir.name
         self.device = torch.device(device)
+        self.best_checkpoint = self.project_dir / "best.pt"
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
-        if checkpoint is None:
+        if load_checkpoint is None:
             self._load_pretrained()
         else:
-            self._load_checkpoint(checkpoint)
+            ckpt_file = (
+                self.project_dir / f"ep-{load_checkpoint}.pt"
+                if isinstance(load_checkpoint, int)
+                else self.project_dir / str(load_checkpoint)
+            )
+            self._load_checkpoint(ckpt_file)
 
     def _load_pretrained(self) -> None:
         """Load FCOS pretrained weights.
@@ -98,8 +106,11 @@ class FCOSTrainer:
         if optimizer_state_dict is not None:
             self.optimizer.load_state_dict(optimizer_state_dict)
 
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="max", factor=0.5, patience=5
+        # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        #     self.optimizer, T_0=20
+        # )
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=60
         )
         if scheduler_state_dict is not None:
             self.scheduler.load_state_dict(scheduler_state_dict)
@@ -125,8 +136,12 @@ class FCOSTrainer:
             lr_log=ckpt.get("lr_log"),
         )
 
-    def save_checkpoint(self, ckpt_file: Path | str) -> None:
-        ckpt_file = Path(ckpt_file)
+    def save_checkpoint(self, ckpt_file: Path | str | None = None) -> None:
+        ckpt_file = (
+            self.project_dir / f"ep-{self.total_epochs}.pt"
+            if ckpt_file is None
+            else Path(ckpt_file)
+        )
         checkpoint = {
             "total_epochs": self.total_epochs,
             "model_state_dict": self.model.state_dict(),
@@ -265,6 +280,30 @@ class FCOSTrainer:
             display(fig)  # type: ignore
         return fig
 
+    def plot_lr(
+        self,
+        figsize: tuple[int, int] = (12, 3),
+        label: str = "",
+        epoch_range: tuple[int | None, int | None] | None = None,
+        show: bool = False,
+    ) -> plt.Figure:
+        """Create lr figure. Returns figure for caller to display/handle."""
+        fig, ax = plt.subplots()
+        fig.set_size_inches(figsize)
+
+        epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
+        epochs = list(range(1, len(self.lr_log) + 1))[epoch_slice]
+        lr_log = self.lr_log[epoch_slice]
+
+        ax.plot(epochs, lr_log)
+        ax.set_title(f"Learning Rate {label}")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Learning Rate")
+        plt.close(fig)
+        if show:
+            display(fig)  # type: ignore
+        return fig
+
     def train(
         self,
         *,
@@ -337,16 +376,17 @@ class FCOSTrainer:
         self.total_epochs += 1
         current_lr = self.optimizer.param_groups[0]["lr"]
         self.lr_log.append(current_lr)
+        self.scheduler.step()
 
         if val_loader is not None:
             metrics = self.evaluate(val_loader)
             self.eval_log.append(metrics)
-            self.scheduler.step(metrics["map"])
+            # self.scheduler.step(metrics["map"])  # For ReduceLROnPlateau
             if metrics["map"] > self.best_map:
                 self.best_map = metrics["map"]
                 self.best_epoch = self.total_epochs
                 print(f"New best mAP={self.best_map:.4f} at epoch {self.best_epoch}")
-                self.save_checkpoint(self.best_checkpoint or "best_model.pt")
+                self.save_checkpoint(self.best_checkpoint)
 
         print(
             f"Epoch {self.total_epochs}: val mAP={metrics['map']:.4f} lr={current_lr:.6f}"
