@@ -29,13 +29,13 @@ class FCOSTrainer:
         *,
         categories: list[str],
         checkpoint: Path | str | None = None,
+        best_checkpoint: Path | str | None = None,
         device: str | torch.device = "mps",
-        lr: float | None = None,
     ) -> None:
         self.categories = categories
         self.num_categories = len(categories)
+        self.best_checkpoint = best_checkpoint
         self.device = torch.device(device)
-        self.lr = lr
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
@@ -69,6 +69,41 @@ class FCOSTrainer:
 
         self._setup_model(model_state_dict=model_state_dict)
 
+    def _setup_model(
+        self,
+        *,
+        model_state_dict: dict[str, Any],
+        optimizer_state_dict: dict[str, Any] | None = None,
+        scheduler_state_dict: dict[str, Any] | None = None,
+        total_epochs: int = 0,
+        best_map: float = 0.0,
+        best_epoch: int = 0,
+        loss_log: list[float] | None = None,
+        eval_log: list[dict[str, Any]] | None = None,
+        lr_log: list[float] | None = None,
+    ) -> None:
+        self.total_epochs = total_epochs
+        self.best_map = best_map
+        self.best_epoch = best_epoch
+        self.loss_log = loss_log if loss_log else []  # Per-iteration
+        self.eval_log = eval_log if eval_log else []  # Per-epoch
+        self.lr_log = lr_log if lr_log else []  # Per-epoch
+
+        err_keys = self.model.load_state_dict(model_state_dict, strict=False)
+        print(f"err_keys = {err_keys}")
+        self.model.to(self.device)
+        self._set_requires_grad()
+
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters())
+        if optimizer_state_dict is not None:
+            self.optimizer.load_state_dict(optimizer_state_dict)
+
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode="max", factor=0.5, patience=5
+        )
+        if scheduler_state_dict is not None:
+            self.scheduler.load_state_dict(scheduler_state_dict)
+
     def _load_checkpoint(self, ckpt_file: Path | str) -> None:
         ckpt_file = Path(ckpt_file)
         print(f"Loading checkpoint: {ckpt_file}")
@@ -81,35 +116,14 @@ class FCOSTrainer:
         self._setup_model(
             model_state_dict=ckpt["model_state_dict"],
             optimizer_state_dict=ckpt["optimizer_state_dict"],
+            scheduler_state_dict=ckpt["scheduler_state_dict"],
             total_epochs=ckpt["total_epochs"],
+            best_map=ckpt.get("best_map", 0.0),
+            best_epoch=ckpt.get("best_epoch", 0),
             loss_log=ckpt["loss_log"],
             eval_log=ckpt.get("eval_log"),
+            lr_log=ckpt.get("lr_log"),
         )
-
-    def _setup_model(
-        self,
-        *,
-        model_state_dict: dict[str, Any],
-        optimizer_state_dict: dict[str, Any] | None = None,
-        total_epochs: int = 0,
-        loss_log: list[float] | None = None,
-        eval_log: list[dict[str, Any]] | None = None,
-    ) -> None:
-        self.total_epochs = total_epochs
-        self.loss_log = loss_log if loss_log else []  # Per-iteration
-        self.eval_log = eval_log if eval_log else []  # Per-epoch
-
-        err_keys = self.model.load_state_dict(model_state_dict, strict=False)
-        print(f"err_keys = {err_keys}")
-        self.model.to(self.device)
-        self._set_requires_grad()
-
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters())
-        if optimizer_state_dict is not None:
-            self.optimizer.load_state_dict(optimizer_state_dict)
-        if self.lr is not None:
-            for param_group in self.optimizer.param_groups:
-                param_group["lr"] = self.lr
 
     def save_checkpoint(self, ckpt_file: Path | str) -> None:
         ckpt_file = Path(ckpt_file)
@@ -117,17 +131,18 @@ class FCOSTrainer:
             "total_epochs": self.total_epochs,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            # "scheduler_state_dict": scheduler.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict(),
+            "best_map": self.best_map,
+            "best_epoch": self.best_epoch,
             "loss_log": self.loss_log,
             "eval_log": self.eval_log,
+            "lr_log": self.lr_log,
         }
         torch.save(checkpoint, ckpt_file)
 
     def _set_requires_grad(self) -> None:
         for param in self.model.parameters():
             param.requires_grad_(False)
-        # for param in self.model.head.classification_head.cls_logits.parameters():
-        #     param.requires_grad_(True)
         for param in self.model.head.parameters():
             param.requires_grad_(True)
 
@@ -319,11 +334,23 @@ class FCOSTrainer:
             # Do a single optimization step
             self.optimizer.step()
 
+        self.total_epochs += 1
+        current_lr = self.optimizer.param_groups[0]["lr"]
+        self.lr_log.append(current_lr)
+
         if val_loader is not None:
             metrics = self.evaluate(val_loader)
             self.eval_log.append(metrics)
+            self.scheduler.step(metrics["map"])
+            if metrics["map"] > self.best_map:
+                self.best_map = metrics["map"]
+                self.best_epoch = self.total_epochs
+                print(f"New best mAP={self.best_map:.4f} at epoch {self.best_epoch}")
+                self.save_checkpoint(self.best_checkpoint or "best_model.pt")
 
-        self.total_epochs += 1
+        print(
+            f"Epoch {self.total_epochs}: val mAP={metrics['map']:.4f} lr={current_lr:.6f}"
+        )
 
     def evaluate(self, loader: DataLoader[Any]) -> dict[str, Any]:
         self.model.eval()
