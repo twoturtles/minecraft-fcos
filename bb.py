@@ -6,7 +6,7 @@ import logging
 import random
 import shutil
 from pathlib import Path
-from typing import Annotated, Any, Callable, Iterator, Mapping, Self, Sequence
+from typing import Annotated, Any, Callable, Iterator, Mapping, Self, Sequence, TypeVar
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
@@ -25,6 +25,8 @@ import tt
 LOG = logging.getLogger(__name__)
 
 DEFAULT_INFO_FNAME: str = "info.json"
+
+_T = TypeVar("_T")
 
 
 class BBox(BaseModel):
@@ -627,6 +629,26 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         )
 
         return stats.sort_values("count", ascending=False)
+
+
+class TransformedSubset(torch.utils.data.Dataset[_T]):
+    """Dataset wrapper to apply transforms to a subset. Needed since torch
+    random_split returns Subset objects which apply the transforms of the
+    original. Usage - first do split, then wrap the subset that needs transforms
+    with this class"""
+
+    def __init__(
+        self, subset: torch.utils.data.Subset[_T], transform: Callable[[_T], _T]
+    ) -> None:
+        self.subset = subset
+        self.transform = transform
+
+    def __getitem__(self, idx: int) -> _T:
+        item = self.subset[idx]
+        return self.transform(item)
+
+    def __len__(self) -> int:
+        return len(self.subset)
 
 
 class MCDataLoader(torch.utils.data.DataLoader[Any]):
