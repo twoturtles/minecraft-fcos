@@ -491,14 +491,18 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
 
         # Handle images with no boxes
         if "boxes" not in target:
-            target["boxes"] = torch.zeros(0, 4)
+            h, w = image.shape[1:]
+            target["boxes"] = tv_tensors.BoundingBoxes(
+                torch.zeros(0, 4),
+                format=tv_tensors.BoundingBoxFormat.XYXY,
+                canvas_size=(h, w),
+            )
+
         if "labels" not in target:
             target["labels"] = torch.zeros(0, dtype=torch.int64)
 
-        boxes = target["boxes"]
         if self.transform:
-            image, boxes = self.transform(image, boxes)
-            target["boxes"] = boxes
+            image, target = self.transform(image, target)
         return image, target
 
     # https://docs.pytorch.org/vision/main/auto_examples/transforms/plot_transforms_e2e.html
