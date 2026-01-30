@@ -30,6 +30,8 @@ class FCOSTrainer:
         categories: list[str],
         project_dir: Path | str,
         load_checkpoint: Path | str | int | None = None,
+        score_thresh: float = 0.2,
+        nms_thresh: float = 0.4,
         device: str | torch.device = "mps",
     ) -> None:
         self.categories = categories
@@ -39,6 +41,8 @@ class FCOSTrainer:
         self.project_name = self.project_dir.name
         self.device = torch.device(device)
         self.best_checkpoint = self.project_dir / "best.pt"
+        self.score_thresh = score_thresh
+        self.nms_thresh = nms_thresh
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
@@ -65,6 +69,8 @@ class FCOSTrainer:
             weights=None,
             weights_backbone=None,
             num_classes=self.num_categories,
+            score_thresh=self.score_thresh,
+            nms_thresh=self.nms_thresh,
         )
         # Load pretrained
         model_state_dict = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.get_state_dict(
@@ -122,6 +128,8 @@ class FCOSTrainer:
             weights=None,
             weights_backbone=None,
             num_classes=self.num_categories,
+            score_thresh=self.score_thresh,
+            nms_thresh=self.nms_thresh,
         )
         ckpt = torch.load(ckpt_file, weights_only=True)
         self._setup_model(
