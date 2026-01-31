@@ -168,6 +168,8 @@ class FCOSTrainer:
             param.requires_grad_(False)
         for param in self.model.head.parameters():
             param.requires_grad_(True)
+        for param in self.model.backbone.fpn.parameters():
+            param.requires_grad_(True)
 
     def topk_preds(self, preds: list[Detection], k: int) -> list[Detection]:
         """Filter predictions by top-k."""
