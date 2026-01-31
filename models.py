@@ -116,7 +116,7 @@ class FCOSTrainer:
         #     self.optimizer, T_0=20
         # )
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=60
+            self.optimizer, T_max=100
         )
         if scheduler_state_dict is not None:
             self.scheduler.load_state_dict(scheduler_state_dict)
