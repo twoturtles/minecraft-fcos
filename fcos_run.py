@@ -25,18 +25,6 @@ import tt_fcos
 
 LOG = logging.getLogger(__name__)
 
-CATEGORIES = [
-    "chicken",
-    "cow",
-    "creeper",
-    "enderman",
-    "pig",
-    "sheep",
-    "skeleton",
-    "spider",
-    "zombie",
-]
-
 
 def bb_frame_cb(
     frame: NDArray[np.uint8],
@@ -50,10 +38,9 @@ def bb_frame_cb(
 
 
 def load_model(model_path: Path) -> tt_fcos.FCOSTrainer:
-    return tt_fcos.FCOSTrainer(
-        categories=CATEGORIES,
+    return tt_fcos.FCOSTrainer.load_checkpoint(
+        model_path,
         project_dir=model_path.parent,
-        load_checkpoint=model_path,
         score_thresh=0.5,
         nms_thresh=0.4,
     )
