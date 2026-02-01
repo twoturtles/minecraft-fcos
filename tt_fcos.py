@@ -1,3 +1,7 @@
+"""
+Class to help with training FCOS
+"""
+
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -179,34 +183,6 @@ class FCOSTrainer:
         for param in self.model.backbone.fpn.parameters():
             param.requires_grad_(True)
 
-    def topk_preds(self, preds: list[Detection], k: int) -> list[Detection]:
-        """Filter predictions by top-k."""
-        filtered_preds: list[Detection] = []
-        for pred in preds:
-            boxes, scores, labels = pred["boxes"], pred["scores"], pred["labels"]
-            topk_scores, topk_indices = torch.topk(scores, k=min(k, len(scores)))
-            filtered_pred: Detection = {
-                "boxes": boxes[topk_indices],
-                "scores": topk_scores,
-                "labels": labels[topk_indices],
-            }
-            filtered_preds.append(filtered_pred)
-        return filtered_preds
-
-    def filter_preds(self, preds: list[Detection], thresh: float) -> list[Detection]:
-        """Filter predictions by score threshold."""
-        filtered_preds: list[Detection] = []
-        for pred in preds:
-            boxes, scores, labels = pred["boxes"], pred["scores"], pred["labels"]
-            mask = scores >= thresh
-            filtered_pred: Detection = {
-                "boxes": boxes[mask],
-                "scores": scores[mask],
-                "labels": labels[mask],
-            }
-            filtered_preds.append(filtered_pred)
-        return filtered_preds
-
     def infer(self, img: tv.tv_tensors.Image) -> Detection:
         batch = img.unsqueeze(0)
         return self.forward(batch)[0]
@@ -217,115 +193,6 @@ class FCOSTrainer:
         with torch.inference_mode():
             preds: list[Detection] = self.model(batch)
         return preds
-
-    def plot_infer(
-        self, img: tv.tv_tensors.Image, topk: int | None = None
-    ) -> Image.Image:
-        pred = self.infer(img)
-        if topk != None:
-            pred = self.topk_preds([pred], k=topk)[0]
-        ret = bb.torch_plot_bb(
-            img, pred, self.meta["classes"], include_scores=True, return_pil=True
-        )
-        assert isinstance(ret, Image.Image)
-        return ret
-
-    def plot_loss(
-        self,
-        figsize: tuple[int, int] = (12, 3),
-        label: str = "",
-        epoch_range: tuple[int | None, int | None] | None = None,
-        show: bool = False,
-    ) -> plt.Figure:
-        """Create loss figure. Returns figure for caller to display/handle."""
-        fig, ax = plt.subplots()
-        fig.set_size_inches(figsize)
-
-        loss_log = self.meta["loss_log"]
-        total_epochs = self.meta["total_epochs"]
-
-        if epoch_range is None:
-            iter_slice = slice(None)
-        else:
-            iters_per_epoch = len(loss_log) // total_epochs
-            start = (
-                epoch_range[0] * iters_per_epoch if epoch_range[0] is not None else None
-            )
-            end = (
-                epoch_range[1] * iters_per_epoch if epoch_range[1] is not None else None
-            )
-            iter_slice = slice(start, end)
-
-        train_x = np.linspace(0, total_epochs, len(loss_log))[iter_slice]
-        loss_log = loss_log[iter_slice]
-
-        ax.plot(train_x, loss_log)
-        ax.set_title(f"Training Loss {label}")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        plt.close(fig)
-        if show:
-            display(fig)  # type: ignore
-        return fig
-
-    def plot_eval(
-        self,
-        keys: list[str] | None = None,
-        figsize: tuple[int, int] = (12, 3),
-        label: str = "",
-        epoch_range: tuple[int | None, int | None] | None = None,
-        show: bool = False,
-    ) -> plt.Figure:
-        """Create eval figure. Returns figure for caller to display/handle."""
-        if keys is None:
-            keys = ["map", "map_50", "map_75", "mar_100"]
-        fig, ax = plt.subplots()
-        fig.set_size_inches(figsize)
-
-        eval_log = self.meta["eval_log"]
-        epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
-        epochs = list(range(1, len(eval_log) + 1))[epoch_slice]
-        eval_log = eval_log[epoch_slice]
-
-        for key in keys:
-            ax.plot(
-                epochs,
-                [e[key] for e in eval_log],
-                label=key,
-            )
-        ax.set_title(f"Evals {label}")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Metric Value")
-        ax.legend()
-        plt.close(fig)
-        if show:
-            display(fig)  # type: ignore
-        return fig
-
-    def plot_lr(
-        self,
-        figsize: tuple[int, int] = (12, 3),
-        label: str = "",
-        epoch_range: tuple[int | None, int | None] | None = None,
-        show: bool = False,
-    ) -> plt.Figure:
-        """Create lr figure. Returns figure for caller to display/handle."""
-        fig, ax = plt.subplots()
-        fig.set_size_inches(figsize)
-
-        lr_log = self.meta["lr_log"]
-        epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
-        epochs = list(range(1, len(lr_log) + 1))[epoch_slice]
-        lr_log = lr_log[epoch_slice]
-
-        ax.plot(epochs, lr_log)
-        ax.set_title(f"Learning Rate {label}")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Learning Rate")
-        plt.close(fig)
-        if show:
-            display(fig)  # type: ignore
-        return fig
 
     def train(
         self,
@@ -430,6 +297,113 @@ class FCOSTrainer:
                 metric.update(preds, targets)
 
         return metric.compute()
+
+    ## Plot Utils
+
+    def plot_infer(self, img: tv.tv_tensors.Image) -> Image.Image:
+        pred = self.infer(img)
+        ret = bb.torch_plot_bb(
+            img, pred, self.meta["classes"], include_scores=True, return_pil=True
+        )
+        assert isinstance(ret, Image.Image)
+        return ret
+
+    def plot_loss(
+        self,
+        figsize: tuple[int, int] = (12, 3),
+        label: str = "",
+        epoch_range: tuple[int | None, int | None] | None = None,
+        show: bool = False,
+    ) -> plt.Figure:
+        """Create loss figure. Returns figure for caller to display/handle."""
+        fig, ax = plt.subplots()
+        fig.set_size_inches(figsize)
+
+        loss_log = self.meta["loss_log"]
+        total_epochs = self.meta["total_epochs"]
+
+        if epoch_range is None:
+            iter_slice = slice(None)
+        else:
+            iters_per_epoch = len(loss_log) // total_epochs
+            start = (
+                epoch_range[0] * iters_per_epoch if epoch_range[0] is not None else None
+            )
+            end = (
+                epoch_range[1] * iters_per_epoch if epoch_range[1] is not None else None
+            )
+            iter_slice = slice(start, end)
+
+        train_x = np.linspace(0, total_epochs, len(loss_log))[iter_slice]
+        loss_log = loss_log[iter_slice]
+
+        ax.plot(train_x, loss_log)
+        ax.set_title(f"Training Loss {label}")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        plt.close(fig)
+        if show:
+            display(fig)  # type: ignore
+        return fig
+
+    def plot_eval(
+        self,
+        keys: list[str] | None = None,
+        figsize: tuple[int, int] = (12, 3),
+        label: str = "",
+        epoch_range: tuple[int | None, int | None] | None = None,
+        show: bool = False,
+    ) -> plt.Figure:
+        """Create eval figure. Returns figure for caller to display/handle."""
+        if keys is None:
+            keys = ["map", "map_50", "map_75", "mar_100"]
+        fig, ax = plt.subplots()
+        fig.set_size_inches(figsize)
+
+        eval_log = self.meta["eval_log"]
+        epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
+        epochs = list(range(1, len(eval_log) + 1))[epoch_slice]
+        eval_log = eval_log[epoch_slice]
+
+        for key in keys:
+            ax.plot(
+                epochs,
+                [e[key] for e in eval_log],
+                label=key,
+            )
+        ax.set_title(f"Evals {label}")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Metric Value")
+        ax.legend()
+        plt.close(fig)
+        if show:
+            display(fig)  # type: ignore
+        return fig
+
+    def plot_lr(
+        self,
+        figsize: tuple[int, int] = (12, 3),
+        label: str = "",
+        epoch_range: tuple[int | None, int | None] | None = None,
+        show: bool = False,
+    ) -> plt.Figure:
+        """Create lr figure. Returns figure for caller to display/handle."""
+        fig, ax = plt.subplots()
+        fig.set_size_inches(figsize)
+
+        lr_log = self.meta["lr_log"]
+        epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
+        epochs = list(range(1, len(lr_log) + 1))[epoch_slice]
+        lr_log = lr_log[epoch_slice]
+
+        ax.plot(epochs, lr_log)
+        ax.set_title(f"Learning Rate {label}")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Learning Rate")
+        plt.close(fig)
+        if show:
+            display(fig)  # type: ignore
+        return fig
 
 
 def compare_models(
