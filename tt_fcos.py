@@ -86,6 +86,7 @@ class FCOSTrainer:
             self.optimizer.load_state_dict(optimizer_state_dict)
 
         # Setup scheduler
+        # XXX Manually set T_max for LR scheduler to num_epochs
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=100
         )
