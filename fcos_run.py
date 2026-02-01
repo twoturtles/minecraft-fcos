@@ -20,8 +20,8 @@ from PIL import Image
 from torchvision.transforms.v2 import functional as v2F  # type: ignore
 
 import bb
-import models
 import tt
+import tt_fcos
 
 LOG = logging.getLogger(__name__)
 
@@ -42,15 +42,15 @@ def bb_frame_cb(
     frame: NDArray[np.uint8],
     obs: mc.network.ObservationPacket,
     *,
-    trainer: models.FCOSTrainer,
+    trainer: tt_fcos.FCOSTrainer,
 ) -> NDArray[np.uint8]:
     pt_image = v2F.to_image(frame)
     img = trainer.plot_infer(pt_image)
     return np.array(img)
 
 
-def load_model(model_path: Path) -> models.FCOSTrainer:
-    return models.FCOSTrainer(
+def load_model(model_path: Path) -> tt_fcos.FCOSTrainer:
+    return tt_fcos.FCOSTrainer(
         categories=CATEGORIES,
         project_dir=model_path.parent,
         load_checkpoint=model_path,
