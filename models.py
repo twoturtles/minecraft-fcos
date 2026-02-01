@@ -22,20 +22,41 @@ class Detection(TypedDict):
     labels: torch.Tensor
 
 
+class Meta(TypedDict, total=False):
+    classes: list[str]
+    total_epochs: int
+    best_map: float
+    best_epoch: int
+    loss_log: list[float]
+    eval_log: list[dict[str, Any]]
+    lr_log: list[float]
+
+
 class FCOSTrainer:
 
     def __init__(
         self,
         *,
-        categories: list[str],
+        meta: Meta,
         project_dir: Path | str,
-        load_checkpoint: Path | str | int | None = None,
+        model_state_dict: dict[str, Any],
+        optimizer_state_dict: dict[str, Any] | None = None,
+        scheduler_state_dict: dict[str, Any] | None = None,
         score_thresh: float = 0.2,
         nms_thresh: float = 0.4,
         device: str | torch.device = "mps",
     ) -> None:
-        self.categories = categories
-        self.num_categories = len(categories)
+        # Initialize meta with defaults
+        self.meta: Meta = {
+            "classes": meta["classes"],
+            "total_epochs": meta.get("total_epochs", 0),
+            "best_map": meta.get("best_map", 0.0),
+            "best_epoch": meta.get("best_epoch", 0),
+            "loss_log": meta.get("loss_log") or [],
+            "eval_log": meta.get("eval_log") or [],
+            "lr_log": meta.get("lr_log") or [],
+        }
+
         self.project_dir = Path(project_dir)
         self.project_dir.mkdir(parents=True, exist_ok=True)
         self.project_name = self.project_dir.name
@@ -46,120 +67,105 @@ class FCOSTrainer:
 
         self.preprocess = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.transforms()
 
-        if load_checkpoint is None:
-            self._load_pretrained()
-        else:
-            ckpt_file = (
-                self.project_dir / f"ep-{load_checkpoint}.pt"
-                if isinstance(load_checkpoint, int)
-                else self.project_dir / str(load_checkpoint)
-            )
-            self._load_checkpoint(ckpt_file)
-
-    def _load_pretrained(self) -> None:
-        """Load FCOS pretrained weights.
-        This is expected: missing_keys=[
-            "head.classification_head.cls_logits.weight",
-            "head.classification_head.cls_logits.bias",
-        ],
-        """
-        print("Initializing new model")
-        # FCOS init
+        # Create and setup model
         self.model = fcos.fcos_resnet50_fpn(
             weights=None,
             weights_backbone=None,
-            num_classes=self.num_categories,
+            num_classes=len(self.meta["classes"]),
             score_thresh=self.score_thresh,
             nms_thresh=self.nms_thresh,
         )
-        # Load pretrained
-        model_state_dict = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.get_state_dict(
-            progress=True, check_hash=True
-        )
-
-        # Get rid of classification head weights
-        del model_state_dict["head.classification_head.cls_logits.weight"]
-        del model_state_dict["head.classification_head.cls_logits.bias"]
-
-        self._setup_model(model_state_dict=model_state_dict)
-
-    def _setup_model(
-        self,
-        *,
-        model_state_dict: dict[str, Any],
-        optimizer_state_dict: dict[str, Any] | None = None,
-        scheduler_state_dict: dict[str, Any] | None = None,
-        total_epochs: int = 0,
-        best_map: float = 0.0,
-        best_epoch: int = 0,
-        loss_log: list[float] | None = None,
-        eval_log: list[dict[str, Any]] | None = None,
-        lr_log: list[float] | None = None,
-    ) -> None:
-        self.total_epochs = total_epochs
-        self.best_map = best_map
-        self.best_epoch = best_epoch
-        self.loss_log = loss_log if loss_log else []  # Per-iteration
-        self.eval_log = eval_log if eval_log else []  # Per-epoch
-        self.lr_log = lr_log if lr_log else []  # Per-epoch
-
         err_keys = self.model.load_state_dict(model_state_dict, strict=False)
         print(f"err_keys = {err_keys}")
         self.model.to(self.device)
         self._set_requires_grad()
 
+        # Setup optimizer
         self.optimizer = torch.optim.AdamW(params=self.model.parameters())
         if optimizer_state_dict is not None:
             self.optimizer.load_state_dict(optimizer_state_dict)
 
-        # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        #     self.optimizer, T_0=20
-        # )
+        # Setup scheduler
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=100
         )
         if scheduler_state_dict is not None:
             self.scheduler.load_state_dict(scheduler_state_dict)
 
-    def _load_checkpoint(self, ckpt_file: Path | str) -> None:
-        ckpt_file = Path(ckpt_file)
-        print(f"Loading checkpoint: {ckpt_file}")
-        self.model = fcos.fcos_resnet50_fpn(
-            weights=None,
-            weights_backbone=None,
-            num_classes=self.num_categories,
-            score_thresh=self.score_thresh,
-            nms_thresh=self.nms_thresh,
+    @classmethod
+    def new(
+        cls,
+        *,
+        classes: list[str],
+        project_dir: Path | str,
+        score_thresh: float = 0.2,
+        nms_thresh: float = 0.4,
+        device: str | torch.device = "mps",
+    ) -> "FCOSTrainer":
+        """Create a new FCOSTrainer with pretrained COCO weights.
+
+        Missing keys for classification head are expected since we use
+        a different number of classes.
+        """
+        print("Initializing new model")
+        model_state_dict = fcos.FCOS_ResNet50_FPN_Weights.COCO_V1.get_state_dict(
+            progress=True, check_hash=True
         )
+        # Remove classification head weights (different num_classes)
+        del model_state_dict["head.classification_head.cls_logits.weight"]
+        del model_state_dict["head.classification_head.cls_logits.bias"]
+
+        return cls(
+            meta={"classes": classes},
+            project_dir=project_dir,
+            model_state_dict=model_state_dict,
+            score_thresh=score_thresh,
+            nms_thresh=nms_thresh,
+            device=device,
+        )
+
+    @classmethod
+    def load_checkpoint(
+        cls,
+        ckpt_file: Path | str | int,
+        *,
+        project_dir: Path | str,
+        score_thresh: float = 0.2,
+        nms_thresh: float = 0.4,
+        device: str | torch.device = "mps",
+    ) -> "FCOSTrainer":
+        """Load an FCOSTrainer from a checkpoint file."""
+        project_dir_path = Path(project_dir)
+        if isinstance(ckpt_file, int):
+            ckpt_file = project_dir_path / f"ep-{ckpt_file}.pt"
+        else:
+            ckpt_file = Path(ckpt_file)
+
+        print(f"Loading checkpoint: {ckpt_file}")
         ckpt = torch.load(ckpt_file, weights_only=True)
-        self._setup_model(
+
+        return cls(
+            meta=ckpt["meta"],
+            project_dir=project_dir,
             model_state_dict=ckpt["model_state_dict"],
             optimizer_state_dict=ckpt["optimizer_state_dict"],
             scheduler_state_dict=ckpt["scheduler_state_dict"],
-            total_epochs=ckpt["total_epochs"],
-            best_map=ckpt.get("best_map", 0.0),
-            best_epoch=ckpt.get("best_epoch", 0),
-            loss_log=ckpt["loss_log"],
-            eval_log=ckpt.get("eval_log"),
-            lr_log=ckpt.get("lr_log"),
+            score_thresh=score_thresh,
+            nms_thresh=nms_thresh,
+            device=device,
         )
 
     def save_checkpoint(self, ckpt_file: Path | str | None = None) -> None:
         ckpt_file = (
-            self.project_dir / f"ep-{self.total_epochs}.pt"
+            self.project_dir / f"ep-{self.meta['total_epochs']}.pt"
             if ckpt_file is None
             else Path(ckpt_file)
         )
         checkpoint = {
-            "total_epochs": self.total_epochs,
+            "meta": self.meta,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
-            "best_map": self.best_map,
-            "best_epoch": self.best_epoch,
-            "loss_log": self.loss_log,
-            "eval_log": self.eval_log,
-            "lr_log": self.lr_log,
         }
         torch.save(checkpoint, ckpt_file)
 
@@ -217,7 +223,7 @@ class FCOSTrainer:
         if topk != None:
             pred = self.topk_preds([pred], k=topk)[0]
         ret = bb.torch_plot_bb(
-            img, pred, self.categories, include_scores=True, return_pil=True
+            img, pred, self.meta["classes"], include_scores=True, return_pil=True
         )
         assert isinstance(ret, Image.Image)
         return ret
@@ -233,10 +239,13 @@ class FCOSTrainer:
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)
 
+        loss_log = self.meta["loss_log"]
+        total_epochs = self.meta["total_epochs"]
+
         if epoch_range is None:
             iter_slice = slice(None)
         else:
-            iters_per_epoch = len(self.loss_log) // self.total_epochs
+            iters_per_epoch = len(loss_log) // total_epochs
             start = (
                 epoch_range[0] * iters_per_epoch if epoch_range[0] is not None else None
             )
@@ -245,8 +254,8 @@ class FCOSTrainer:
             )
             iter_slice = slice(start, end)
 
-        train_x = np.linspace(0, self.total_epochs, len(self.loss_log))[iter_slice]
-        loss_log = self.loss_log[iter_slice]
+        train_x = np.linspace(0, total_epochs, len(loss_log))[iter_slice]
+        loss_log = loss_log[iter_slice]
 
         ax.plot(train_x, loss_log)
         ax.set_title(f"Training Loss {label}")
@@ -271,9 +280,10 @@ class FCOSTrainer:
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)
 
+        eval_log = self.meta["eval_log"]
         epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
-        epochs = list(range(1, len(self.eval_log) + 1))[epoch_slice]
-        eval_log = self.eval_log[epoch_slice]
+        epochs = list(range(1, len(eval_log) + 1))[epoch_slice]
+        eval_log = eval_log[epoch_slice]
 
         for key in keys:
             ax.plot(
@@ -301,9 +311,10 @@ class FCOSTrainer:
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)
 
+        lr_log = self.meta["lr_log"]
         epoch_slice = slice(*epoch_range) if epoch_range is not None else slice(None)
-        epochs = list(range(1, len(self.lr_log) + 1))[epoch_slice]
-        lr_log = self.lr_log[epoch_slice]
+        epochs = list(range(1, len(lr_log) + 1))[epoch_slice]
+        lr_log = lr_log[epoch_slice]
 
         ax.plot(epochs, lr_log)
         ax.set_title(f"Learning Rate {label}")
@@ -340,7 +351,7 @@ class FCOSTrainer:
             plt.close(fig)
 
         print(
-            f"Final epochs={self.total_epochs} loss={self.loss_log[-1]:.4f} mAP={self.eval_log[-1]['map']:.4f}"
+            f"Final epochs={self.meta['total_epochs']} loss={self.meta['loss_log'][-1]:.4f} mAP={self.meta['eval_log'][-1]['map']:.4f}"
         )
 
     def _fixup_targets(self, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -373,7 +384,7 @@ class FCOSTrainer:
             # torchvision models return loss in train mode.
             loss_dict = self.model(batch, targets)
             loss = sum(loss_dict.values())
-            self.loss_log.append(loss.item())
+            self.meta["loss_log"].append(loss.item())
 
             # Zero gradients
             self.optimizer.zero_grad()
@@ -383,23 +394,23 @@ class FCOSTrainer:
             # Do a single optimization step
             self.optimizer.step()
 
-        self.total_epochs += 1
+        self.meta["total_epochs"] += 1
         current_lr = self.optimizer.param_groups[0]["lr"]
-        self.lr_log.append(current_lr)
+        self.meta["lr_log"].append(current_lr)
         self.scheduler.step()
 
         if val_loader is not None:
             metrics = self.evaluate(val_loader)
-            self.eval_log.append(metrics)
+            self.meta["eval_log"].append(metrics)
             # self.scheduler.step(metrics["map"])  # For ReduceLROnPlateau
-            if metrics["map"] > self.best_map:
-                self.best_map = metrics["map"]
-                self.best_epoch = self.total_epochs
-                print(f"New best mAP={self.best_map:.4f} at epoch {self.best_epoch}")
+            if metrics["map"] > self.meta["best_map"]:
+                self.meta["best_map"] = metrics["map"]
+                self.meta["best_epoch"] = self.meta["total_epochs"]
+                print(f"New best mAP={self.meta['best_map']:.4f} at epoch {self.meta['best_epoch']}")
                 self.save_checkpoint(self.best_checkpoint)
 
         print(
-            f"Epoch {self.total_epochs}: val mAP={metrics['map']:.4f} lr={current_lr:.6f}"
+            f"Epoch {self.meta['total_epochs']}: val mAP={metrics['map']:.4f} lr={current_lr:.6f}"
         )
 
     def evaluate(self, loader: DataLoader[Any]) -> dict[str, Any]:
