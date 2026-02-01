@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torchvision as tv  # type: ignore
 from IPython.display import display
+from matplotlib.figure import Figure
 from PIL import Image
 from torch.utils.data import DataLoader
 from torchmetrics.detection import MeanAveragePrecision
@@ -314,7 +315,7 @@ class FCOSTrainer:
         label: str = "",
         epoch_range: tuple[int | None, int | None] | None = None,
         show: bool = False,
-    ) -> plt.Figure:
+    ) -> Figure:
         """Create loss figure. Returns figure for caller to display/handle."""
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)
@@ -353,7 +354,7 @@ class FCOSTrainer:
         label: str = "",
         epoch_range: tuple[int | None, int | None] | None = None,
         show: bool = False,
-    ) -> plt.Figure:
+    ) -> Figure:
         """Create eval figure. Returns figure for caller to display/handle."""
         if keys is None:
             keys = ["map", "map_50", "map_75", "mar_100"]
@@ -386,7 +387,7 @@ class FCOSTrainer:
         label: str = "",
         epoch_range: tuple[int | None, int | None] | None = None,
         show: bool = False,
-    ) -> plt.Figure:
+    ) -> Figure:
         """Create lr figure. Returns figure for caller to display/handle."""
         fig, ax = plt.subplots()
         fig.set_size_inches(figsize)

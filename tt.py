@@ -111,7 +111,7 @@ class ImageDirViewer:
     def __init__(self, image_dir: str | Path, glob_pat: str = "*.png"):
         self.image_dir = image_dir
         self.image_files = sorted(Path(image_dir).glob(glob_pat))
-        self.current_file = None
+        self.current_file: Path | None = None
         self.current_index = 0
 
     def view_image_cb(self, index: int) -> None:
@@ -121,7 +121,7 @@ class ImageDirViewer:
         img = Image.open(self.current_file)
         print(f"dir={self.image_dir} n_images={len(self.image_files)}")
         print(f"index={index} file={self.current_file.name}")
-        display(img)
+        display(img)  # type: ignore
 
     def show_widget(self) -> None:
         slider = widgets.IntSlider(
