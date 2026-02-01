@@ -136,10 +136,11 @@ class FCOSTrainer:
     ) -> "FCOSTrainer":
         """Load an FCOSTrainer from a checkpoint file."""
         project_dir_path = Path(project_dir)
+
         if isinstance(ckpt_file, int):
             ckpt_file = project_dir_path / f"ep-{ckpt_file}.pt"
         else:
-            ckpt_file = Path(ckpt_file)
+            ckpt_file = project_dir_path / ckpt_file
 
         print(f"Loading checkpoint: {ckpt_file}")
         ckpt = torch.load(ckpt_file, weights_only=True)
@@ -406,7 +407,9 @@ class FCOSTrainer:
             if metrics["map"] > self.meta["best_map"]:
                 self.meta["best_map"] = metrics["map"]
                 self.meta["best_epoch"] = self.meta["total_epochs"]
-                print(f"New best mAP={self.meta['best_map']:.4f} at epoch {self.meta['best_epoch']}")
+                print(
+                    f"New best mAP={self.meta['best_map']:.4f} at epoch {self.meta['best_epoch']}"
+                )
                 self.save_checkpoint(self.best_checkpoint)
 
         print(
