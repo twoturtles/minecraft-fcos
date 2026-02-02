@@ -1,4 +1,4 @@
-"""Bounding Boxes"""
+"""Bounding Boxes and Object Detection Utilities"""
 
 import copy
 import json
@@ -6,7 +6,17 @@ import logging
 import random
 import shutil
 from pathlib import Path
-from typing import Annotated, Any, Callable, Iterator, Mapping, Self, Sequence, TypeVar
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Iterator,
+    Mapping,
+    Self,
+    Sequence,
+    TypedDict,
+    TypeVar,
+)
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
@@ -27,6 +37,22 @@ LOG = logging.getLogger(__name__)
 DEFAULT_INFO_FNAME: str = "info.json"
 
 _T = TypeVar("_T")
+
+
+class Detection(TypedDict):
+    """Object Detection Prediction"""
+
+    boxes: tv_tensors.BoundingBoxes
+    scores: torch.Tensor
+    labels: torch.Tensor
+
+
+class Target(TypedDict):
+    """Dataset Target"""
+
+    image_id: int
+    boxes: tv_tensors.BoundingBoxes
+    labels: torch.Tensor
 
 
 class BBox(BaseModel):
@@ -487,9 +513,8 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     def __len__(self) -> int:
         return len(self.coco_dataset)
 
-    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, dict[str, Any]]:
-        item: tuple[tv_tensors.Image, dict[str, Any]] = self.coco_dataset[idx]
-        image, target = item
+    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, Target]:
+        image, target = self.coco_dataset[idx]
 
         # Handle images with no boxes
         if "boxes" not in target:
@@ -506,6 +531,53 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         if self.transform:
             image, target = self.transform(image, target)
         return image, target
+
+    @classmethod
+    def new(
+        cls,
+        *,
+        dset_dir: Path | str,
+        categories: list[str],
+        input_images_dir: Path | str | None = None,
+        images_subdir: str = "images",
+        ann_fname: str = "annotations.json",
+        glob_pat: str = "*.png",
+    ) -> Self:
+        dset_dir = Path(dset_dir)
+        dset_dir.mkdir(parents=True)  # Fail if it exists
+        images_path = dset_dir / images_subdir
+        images_path.mkdir()
+
+        coco: dict[str, Any] = {
+            "images": [],
+            "annotations": [],
+            "categories": [
+                {"id": id, "name": name} for id, name in enumerate(categories)
+            ],
+        }
+
+        if input_images_dir is not None:
+            input_images_dir = Path(input_images_dir)
+            image_files = input_images_dir.glob(glob_pat)
+            for image_id, image_file in enumerate(image_files):
+                shutil.copy2(image_file, images_path)
+                with Image.open(image_file) as img:
+                    width, height = img.size
+                coco["images"].append(
+                    {
+                        "id": image_id,
+                        "file_name": image_file.name,
+                        "width": width,
+                        "height": height,
+                    }
+                )
+
+        with open(dset_dir / ann_fname, "w") as f:
+            json.dump(coco, f, indent=2)
+
+        dset = cls(dset_dir, images_subdir=images_subdir, ann_fname=ann_fname)
+        print(f"Created {dset.root}, {len(dset)} images")
+        return dset
 
     # https://docs.pytorch.org/vision/main/auto_examples/transforms/plot_transforms_e2e.html
     # We need a custom collation function here, since the object detection
@@ -854,6 +926,36 @@ class InferViewer[T]:
     ):
         self.infer_fn = infer_fn
         self.infer_list = infer_list
+        self.categories = categories
+
+    def view_image_cb(self, index: int) -> None:
+        # Call the provided inference function
+        result = self.infer_fn(self.infer_list[index])
+        print(f"index={index} file={result.file}")
+        display(result.plot_bb(categories=self.categories))  # type: ignore[no-untyped-call]
+
+    def show_widget(self) -> None:
+        slider = widgets.IntSlider(
+            value=0,
+            min=0,
+            max=len(self.infer_list) - 1,
+            description="Image:",
+            continuous_update=False,
+        )
+        widgets.interact(self.view_image_cb, index=slider)
+
+
+class TorchInferViewer:
+    """Pass list and function that turns a list item into an ImageResult."""
+
+    def __init__(
+        self,
+        infer_fn: Callable[[T], ImageResult],
+        dset: MCDataset,
+        categories: list[str] | None = None,
+    ):
+        self.infer_fn = infer_fn
+        self.dset = dset
         self.categories = categories
 
     def view_image_cb(self, index: int) -> None:

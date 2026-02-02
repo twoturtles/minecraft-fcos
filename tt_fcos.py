@@ -14,17 +14,12 @@ from matplotlib.figure import Figure
 from PIL import Image
 from torch.utils.data import DataLoader
 from torchmetrics.detection import MeanAveragePrecision
+from torchvision import tv_tensors
 from torchvision.models.detection import fcos  # type: ignore
 from torchvision.transforms import v2 as v2  # type: ignore
 from tqdm.auto import tqdm, trange
 
 import bb
-
-
-class Detection(TypedDict):
-    boxes: torch.Tensor
-    scores: torch.Tensor
-    labels: torch.Tensor
 
 
 class Meta(TypedDict, total=False):
@@ -184,15 +179,29 @@ class FCOSTrainer:
         for param in self.model.backbone.fpn.parameters():
             param.requires_grad_(True)
 
-    def infer(self, img: tv.tv_tensors.Image) -> Detection:
+    def infer(self, img: tv.tv_tensors.Image) -> bb.Detection:
         batch = img.unsqueeze(0)
         return self.forward(batch)[0]
 
-    def forward(self, batch: torch.Tensor) -> list[Detection]:
+    def forward(self, batch: torch.Tensor) -> list[bb.Detection]:
         self.model.eval()
         batch = self.preprocess(batch.to(self.device))
+        h, w = batch.shape[2:]
         with torch.inference_mode():
-            preds: list[Detection] = self.model(batch)
+            raw_preds: list[dict[str, Any]] = self.model(batch)
+        # Convert to typed for clarity
+        preds: list[bb.Detection] = []
+        for raw_pred in raw_preds:
+            pred = bb.Detection(
+                boxes=tv_tensors.BoundingBoxes(
+                    raw_pred["boxes"],
+                    format=tv_tensors.BoundingBoxFormat.XYXY,
+                    canvas_size=(h, w),
+                ),
+                scores=raw_pred["scores"],
+                labels=raw_pred["labels"],
+            )
+            preds.append(pred)
         return preds
 
     def train(
