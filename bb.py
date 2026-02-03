@@ -15,6 +15,7 @@ from typing import (
     Self,
     Sequence,
     TypedDict,
+    TypeIs,
     TypeVar,
 )
 
@@ -53,6 +54,10 @@ class Target(TypedDict):
     image_id: int
     boxes: tv_tensors.BoundingBoxes
     labels: torch.Tensor
+
+
+def is_detection(target: Target | Detection) -> TypeIs[Detection]:
+    return "scores" in target
 
 
 class BBox(BaseModel):
@@ -492,12 +497,13 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     ):
         root = Path(root)
         super().__init__(root=root, transform=transform)
+        self.ann_path = root / ann_fname
 
         # Internal torch coco-format dataset
         self.coco_dataset = tv.datasets.wrap_dataset_for_transforms_v2(
             # The transforms can be v2 since they're handled by the wrapper.
             tv.datasets.CocoDetection(
-                root / images_subdir, root / ann_fname, transforms=v2.ToImage()
+                root / images_subdir, self.ann_path, transforms=v2.ToImage()
             )
         )
 
@@ -531,6 +537,55 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         if self.transform:
             image, target = self.transform(image, target)
         return image, target
+
+    def image_info(self, idx: int) -> dict[str, Any]:
+        info: dict[str, Any] = self.coco_dataset.coco.loadImgs([idx])[0]
+        return info
+
+    def add_detection(self, idx: int, detection: Detection) -> None:
+        """Add annotations from a detection to an image (replaces existing).
+        NOTE: You must run rebuild_index() after completing updates to have the
+        changes reflected in the values returned by dataset indexing.
+        """
+        coco = self.coco_dataset.coco
+        image_id = coco.dataset["images"][idx]["id"]
+
+        # Remove existing annotations for this image
+        coco.dataset["annotations"] = [
+            ann for ann in coco.dataset["annotations"] if ann["image_id"] != image_id
+        ]
+
+        # Get next annotation id
+        if coco.dataset["annotations"]:
+            next_ann_id = max(ann["id"] for ann in coco.dataset["annotations"]) + 1
+        else:
+            next_ann_id = 0
+
+        # Convert XYXY boxes to XYWH (COCO format) and add annotations
+        boxes = detection["boxes"]
+        labels = detection["labels"]
+        for i in range(len(boxes)):
+            x1, y1, x2, y2 = boxes[i].tolist()
+            w, h = x2 - x1, y2 - y1
+            ann = {
+                "id": next_ann_id + i,
+                "image_id": image_id,
+                "category_id": int(labels[i].item()),
+                "bbox": [x1, y1, w, h],
+                "area": w * h,
+                "iscrowd": 0,
+            }
+            coco.dataset["annotations"].append(ann)
+
+    def rebuild_index(self) -> None:
+        """Rebuild indices in the underlying pycocotools. This updates the
+        caches used for indexing"""
+        self.coco_dataset.coco.createIndex()
+
+    def save(self) -> None:
+        """Save annotations to disk."""
+        with open(self.ann_path, "w") as f:
+            json.dump(self.coco_dataset.coco.dataset, f, indent=2)
 
     @classmethod
     def new(
@@ -866,13 +921,13 @@ def plot_bb_inplace(
 
 def torch_plot_bb(
     img: tv_tensors.Image,
-    target: Mapping[str, Any],
+    target: Target | Detection,
     categories: list[str],
     include_scores: bool = False,
     return_pil: bool = False,
 ) -> torch.Tensor | Image.Image:
     cat_ids = target["labels"].tolist()
-    if include_scores:
+    if include_scores and is_detection(target):
         labels = [
             f"{categories[cat_ix]} {score:.2f}"
             for cat_ix, score in zip(cat_ids, target["scores"])
@@ -899,7 +954,7 @@ def torch_plot_bb(
 
 def plot_bb_grid(
     images: list[tv_tensors.Image],
-    targets: list[dict[str, Any]],
+    targets: list[Target | Detection],
     categories: list[str],
     nrow: int = 4,
     include_scores: bool = False,
@@ -945,30 +1000,40 @@ class InferViewer[T]:
         widgets.interact(self.view_image_cb, index=slider)
 
 
-class TorchInferViewer:
-    """Pass list and function that turns a list item into an ImageResult."""
+class BBoxViewer:
+    """Pass dataset and function that turns a tv_tensors.Image into a Detection
+    If no infer_fn is passed, the target from the dataset is used."""
 
     def __init__(
         self,
-        infer_fn: Callable[[T], ImageResult],
         dset: MCDataset,
-        categories: list[str] | None = None,
+        *,
+        infer_fn: Callable[[tv_tensors.Image], Detection] | None = None,
     ):
-        self.infer_fn = infer_fn
         self.dset = dset
-        self.categories = categories
+        self.infer_fn = infer_fn
 
     def view_image_cb(self, index: int) -> None:
         # Call the provided inference function
-        result = self.infer_fn(self.infer_list[index])
-        print(f"index={index} file={result.file}")
-        display(result.plot_bb(categories=self.categories))  # type: ignore[no-untyped-call]
+        image, target = self.dset[index]
+        info = self.dset.image_info(index)
+        results = self.infer_fn(image) if self.infer_fn else target
+        print(f"index={index} file={info["file_name"]}")
+        display(  # type: ignore[no-untyped-call]
+            torch_plot_bb(
+                image,
+                results,
+                self.dset.categories,
+                include_scores=True,
+                return_pil=True,
+            )
+        )
 
     def show_widget(self) -> None:
         slider = widgets.IntSlider(
             value=0,
             min=0,
-            max=len(self.infer_list) - 1,
+            max=len(self.dset) - 1,
             description="Image:",
             continuous_update=False,
         )
