@@ -12,6 +12,7 @@ from typing import (
     Callable,
     Iterator,
     Mapping,
+    NamedTuple,
     Self,
     Sequence,
     TypedDict,
@@ -40,20 +41,30 @@ DEFAULT_INFO_FNAME: str = "info.json"
 _T = TypeVar("_T")
 
 
-class Detection(TypedDict):
-    """Object Detection Prediction"""
+class BaseAnnotation(TypedDict):
+    """Common annotation fields"""
 
     boxes: tv_tensors.BoundingBoxes
-    scores: torch.Tensor
     labels: torch.Tensor
 
 
-class Target(TypedDict):
-    """Dataset Target"""
+class Detection(BaseAnnotation):
+    """Object Detection Prediction (includes BaseAnnotation)"""
+
+    scores: torch.Tensor
+
+
+class Target(BaseAnnotation):
+    """Dataset Target (includes BaseAnnotation)"""
 
     image_id: int
-    boxes: tv_tensors.BoundingBoxes
-    labels: torch.Tensor
+
+
+class MCDatasetItem(NamedTuple):
+    """An entry in a MCDataset"""
+
+    image: tv_tensors.Image
+    target: Target
 
 
 def is_detection(target: Target | Detection) -> TypeIs[Detection]:
@@ -498,12 +509,13 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         root = Path(root)
         super().__init__(root=root, transform=transform)
         self.ann_path = root / ann_fname
+        self.images_path = root / images_subdir
 
         # Internal torch coco-format dataset
         self.coco_dataset = tv.datasets.wrap_dataset_for_transforms_v2(
             # The transforms can be v2 since they're handled by the wrapper.
             tv.datasets.CocoDetection(
-                root / images_subdir, self.ann_path, transforms=v2.ToImage()
+                self.images_path, self.ann_path, transforms=v2.ToImage()
             )
         )
 
@@ -519,8 +531,9 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     def __len__(self) -> int:
         return len(self.coco_dataset)
 
-    def __getitem__(self, idx: int) -> tuple[tv_tensors.Image, Target]:
-        image, target = self.coco_dataset[idx]
+    def __getitem__(self, idx: int) -> MCDatasetItem:
+        item: MCDatasetItem = self.coco_dataset[idx]
+        image, target = item
 
         # Handle images with no boxes
         if "boxes" not in target:
@@ -535,15 +548,29 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
             target["labels"] = torch.zeros(0, dtype=torch.int64)
 
         if self.transform:
-            image, target = self.transform(image, target)
-        return image, target
+            transformed: MCDatasetItem = self.transform(image, target)
+            image, target = transformed
+
+        ret = MCDatasetItem(image, target)
+        return ret
+
+    def view(self) -> None:
+        BBoxViewer(self).show_widget()
 
     def image_info(self, idx: int) -> dict[str, Any]:
+        """Return the coco info for an image
+        {"id": 3, "file_name": "frame_208322.png",
+         "width": 640, "height": 640},
+        """
         info: dict[str, Any] = self.coco_dataset.coco.loadImgs([idx])[0]
         return info
 
-    def add_detection(self, idx: int, detection: Detection) -> None:
-        """Add annotations from a detection to an image (replaces existing).
+    def image_path(self, idx: int) -> Path:
+        """Return the image absolute path"""
+        return Path(self.images_path / self.image_info(idx)["file_name"]).absolute()
+
+    def add_annotation(self, idx: int, ann: BaseAnnotation) -> None:
+        """Add annotations to an image (replaces existing).
         NOTE: You must run rebuild_index() after completing updates to have the
         changes reflected in the values returned by dataset indexing.
         """
@@ -561,29 +588,30 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         else:
             next_ann_id = 0
 
-        # Convert XYXY boxes to XYWH (COCO format) and add annotations
-        boxes = detection["boxes"]
-        labels = detection["labels"]
-        for i in range(len(boxes)):
-            x1, y1, x2, y2 = boxes[i].tolist()
-            w, h = x2 - x1, y2 - y1
-            ann = {
+        # Convert to XYWH (COCO format) and add annotations
+        boxes_xywh = v2.functional.convert_bounding_box_format(
+            ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
+        ).tolist()
+        labels = ann["labels"]
+        for i in range(len(boxes_xywh)):
+            coco_ann = {
                 "id": next_ann_id + i,
                 "image_id": image_id,
                 "category_id": int(labels[i].item()),
-                "bbox": [x1, y1, w, h],
-                "area": w * h,
+                "bbox": boxes_xywh,
+                "area": boxes_xywh[2] * boxes_xywh[3],
                 "iscrowd": 0,
             }
-            coco.dataset["annotations"].append(ann)
+            coco.dataset["annotations"].append(coco_ann)
 
     def rebuild_index(self) -> None:
         """Rebuild indices in the underlying pycocotools. This updates the
         caches used for indexing"""
         self.coco_dataset.coco.createIndex()
 
-    def save(self) -> None:
+    def save_annotations(self, ann_path: Path | str | None = None) -> None:
         """Save annotations to disk."""
+        ann_path = Path(ann_path) if ann_path else self.ann_path
         with open(self.ann_path, "w") as f:
             json.dump(self.coco_dataset.coco.dataset, f, indent=2)
 
@@ -776,12 +804,6 @@ class TransformedSubset(torch.utils.data.Dataset[_T]):
 
     def __len__(self) -> int:
         return len(self.subset)
-
-
-class MCDataLoader(torch.utils.data.DataLoader[Any]):
-    def __init__(self, *args: Any, **kwargs: Any):
-        kwargs.setdefault("collate_fn", MCDataset.collate_fn)
-        super().__init__(*args, **kwargs)
 
 
 # BBox utils

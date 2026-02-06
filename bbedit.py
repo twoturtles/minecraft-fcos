@@ -1,16 +1,20 @@
 """BBox Editing"""
 
 import logging
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypedDict
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
+import torch
+import torchvision.transforms.v2.functional as v2F  # type: ignore
 from ipydatagrid import DataGrid  # type: ignore
 from IPython.display import display
 from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image
+from torchvision import tv_tensors
 
 import bb
 import tt
@@ -37,26 +41,33 @@ DEBUG = widgets.Output(
 
 
 # BBoxEdit format: list of {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
-BBeBB = dict[str, Any]  # BBoxEdit BBox
+class BBeBB(TypedDict):
+    """BBoxEdit BBox"""
+
+    x: int
+    y: int
+    width: int
+    height: int
+    label: str
 
 
 class BBoxEdit:
-    def __init__(self, input: str | Path | bb.Dataset) -> None:
+    def __init__(self, input: str | Path) -> None:
         # Load dataset
-        if isinstance(input, bb.Dataset):
-            self.file = None
-            self.dset = input.copy_deep()
-        else:
-            self.file = Path(input)
-            self.dset = bb.Dataset.load(self.file)
+        self.file = Path(input)
+        self.dset = bb.MCDataset(self.file)
 
-        initial_index = 0
+        # Local copy of the current dset item
+        self.current_index: int
+        self.current_item: bb.MCDatasetItem
+        self.current_pil: Image.Image
+
         self.w = SimpleNamespace()
-        self.current_image = Image.Image()
         self.updating_selection = False  # Prevent cyclic updates
-        self.updating_ui = False
+        self.updating_display = False
 
         # Create all widgets
+        initial_index = 0
         bbox = self._create_bbox_panel()
         right_panel = self._create_right_panel(initial_index)
         zoom_section = self._create_zoom_section()
@@ -67,7 +78,7 @@ class BBoxEdit:
         )
         self.w.ui = widgets.VBox([content_box, zoom_section])
 
-        self._set_ui_from_index(initial_index)
+        self._set_ui(initial_index)
 
     def display(self) -> None:
         display(self.w.ui)  # type: ignore[no-untyped-call]
@@ -75,32 +86,34 @@ class BBoxEdit:
     def save(self, path: str | Path | None = None) -> None:
         if path is None:
             path = self.file
-        assert path is not None
-        self.dset.save(path)
+        self.dset.save_annotations(path)
 
-    def _set_ui_from_ir(self, image_result: bb.ImageResult) -> None:
-        """Update UI from passed ImageResult"""
-        if self.updating_ui:
+    def _update_display(self) -> None:
+        """Update UI from local item copy"""
+        if self.updating_display:
             return
-        self.updating_ui = True
+        self.updating_display = True
 
         try:
-            self.current_image = Image.open(image_result.full_path)
-            size = self.current_image.size
-            self.w.bbox.image = str(image_result.full_path)
-            self.w.bbox.bboxes = to_bbox_widget(image_result.bboxes, size)
-            df = image_result.to_df(size=size)
-            df["area"] = (df["x2"] - df["x1"]) * (df["y2"] - df["y1"])
+            image_path = self.dset.image_path(self.current_index)
+            self.w.bbox.image = str(image_path)
+            self.w.bbox.bboxes = to_bbox_widget(
+                self.current_item.target, self.dset.categories
+            )
+            df = ann_to_df(self.current_item.target, self.dset.categories)
+            df["area"] = df["h"] * df["w"]
             self.w.grid.data = df
             self._grid_update_height()
             self._update_zoom()
         finally:
-            self.updating_ui = False
+            self.updating_display = False
 
-    def _set_ui_from_index(self, index: int) -> None:
-        """Update bbox widget to selected index."""
-        image_result = self.dset.images[index]
-        self._set_ui_from_ir(image_result)
+    def _set_ui(self, index: int) -> None:
+        """Load the selected index into the local copy and set the widget"""
+        self.current_index = index
+        self.current_item = deepcopy(self.dset[index])
+        self.current_pil = v2F.to_pil_image(self.current_item.image)
+        self._update_display()
 
     ##
     # BBox edit - left panel
@@ -119,10 +132,12 @@ class BBoxEdit:
     def _bbox_change_cb(self, change: dict[str, Any]) -> None:
         new_bbebb_list: list[BBeBB] = change["new"]
         # update grid with new bboxes (see also _delete_row_cb)
-        new_bb_list = from_bbox_widget(new_bbebb_list, self.current_image.size)
-        rel = Path(self.w.bbox.image).relative_to(self.dset.base_path)
-        new_ir = self.dset.create_image_result(str(rel), new_bb_list)
-        self._set_ui_from_ir(new_ir)
+        new_ann = from_bbox_widget(
+            new_bbebb_list, self.dset.categories, self.current_pil.size
+        )
+        self.current_item.target["boxes"] = new_ann["boxes"]
+        self.current_item.target["labels"] = new_ann["labels"]
+        self._update_display()
 
     def _bbox_selection_change_cb(self, change: dict[str, Any]) -> None:
         # Update grid with new selection (see also _grid_selection_change)
@@ -155,7 +170,7 @@ class BBoxEdit:
             description="Index:",
             value=initial_index,
             min=0,
-            max=len(self.dset.images) - 1,
+            max=len(self.dset) - 1,
             step=1,
             continuous_update=False,
         )
@@ -175,7 +190,7 @@ class BBoxEdit:
 
     def _on_slider_change(self, change: dict[str, Any]) -> None:
         new_index = change["new"]
-        self._set_ui_from_index(new_index)
+        self._set_ui(new_index)
 
     ## Control Buttons
 
@@ -210,10 +225,13 @@ class BBoxEdit:
 
     def _on_submit(self, button: widgets.Button) -> None:
         index: int = self.w.index_slider.value
-        size = self.current_image.size
-        # Update ImageResult from BBoxEdit
-        new_bbs = from_bbox_widget(self.w.bbox.bboxes, size)
-        self.dset.images[index].bboxes = new_bbs
+        # Update dset from BBoxEdit
+        new_ann = from_bbox_widget(
+            self.w.bbox.bboxes, self.dset.categories, self.current_pil.size
+        )
+        self.current_item.target["boxes"] = new_ann["boxes"]
+        self.current_item.target["labels"] = new_ann["labels"]
+        self.dset.add_annotation(self.current_index, new_ann)
         self._on_skip(button)
 
     def _on_back(self, button: widgets.Button) -> None:
@@ -223,7 +241,7 @@ class BBoxEdit:
 
     def _on_skip(self, button: widgets.Button) -> None:
         slider = self.w.index_slider
-        if slider.value < len(self.dset.images) - 1:
+        if slider.value < len(self.dset) - 1:
             slider.value += 1
 
     def _on_save(self, button: widgets.Button) -> None:
@@ -270,14 +288,14 @@ class BBoxEdit:
     def _delete_row_cb(self, button: widgets.Button) -> None:
         # See also _bbox_change_cb
         # list of dicts {'r': 2, 'c': 1}
-        size = self.current_image.size
+        size = self.current_pil.size
         rows = set([cell["r"] for cell in self.w.grid.selected_cells])
         if len(rows) > 0:
             new_df = self.w.grid.data.drop(list(rows))
-            new_ir = bb.ImageResult.from_df(
-                new_df, self.w.bbox.image, size=size, base_path=self.dset.base_path
-            )
-            self._set_ui_from_ir(new_ir)
+            new_ann = df_to_ann(new_df, self.dset.categories, self.current_pil.size)
+            self.current_item.target["boxes"] = new_ann["boxes"]
+            self.current_item.target["labels"] = new_ann["labels"]
+            self._update_display()
 
     def _grid_update_height(self) -> None:
         num_rows = len(self.w.grid.data)
@@ -341,8 +359,7 @@ class BBoxEdit:
 
         # Load and zoom the image
         index = self.w.index_slider.value
-        image_result = self.dset.images[index]
-        img = self.current_image
+        img = self.current_pil
         zoomed_img = img.resize(
             (int(img.width * self.zoom_level), int(img.height * self.zoom_level)),
             Image.Resampling.LANCZOS,
@@ -361,34 +378,90 @@ class BBoxEdit:
 # Helper functions
 
 
-def to_bbox_widget(bboxes: list[bb.BBox], size: tuple[int, int]) -> list[BBeBB]:
-    """list[BBox] to BBoxEdit format"""
+def to_bbox_widget(ann: bb.BaseAnnotation, categories: list[str]) -> list[BBeBB]:
+    """BoundingBoxes to BBoxEdit format"""
     # BBoxEdit format: list of {'x': 377, 'y': 177, 'width': 181, 'height': 201, 'label': 'apple'}
+    boxes_xywh = v2F.convert_bounding_box_format(
+        ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
+    ).tolist()
+
     bbebb_list: list[BBeBB] = []
-    for bbox in bboxes:
-        coco = bb.xyxyn_to_coco(bbox.xyxyn, size)
-        bbebb = {
-            "x": coco[0],
-            "y": coco[1],
-            "width": coco[2],
-            "height": coco[3],
-            "label": bbox.category,
-        }
+    for bbox, label in zip(boxes_xywh, ann["labels"].tolist()):
+        category = categories[label]
+        bbebb = BBeBB(
+            x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3], label=category
+        )
         bbebb_list.append(bbebb)
     return bbebb_list
 
 
-def from_bbox_widget(bbebb_list: list[BBeBB], size: tuple[int, int]) -> list[bb.BBox]:
-    bb_list: list[bb.BBox] = []
-    for bbebb in bbebb_list:
-        coco = [
-            bbebb["x"],
-            bbebb["y"],
-            bbebb["width"],
-            bbebb["height"],
-        ]
-        xyxyn = bb.coco_to_xyxyn(coco, size)
-        # BBoxEdit can return values out of range if you overlap the edge with a box
-        xyxyn = [bb.clamp(val, 0.0, 1.0) for val in xyxyn]
-        bb_list.append(bb.BBox(category=bbebb["label"], xyxyn=xyxyn))
-    return bb_list
+def from_bbox_widget(
+    bbebb_list: list[BBeBB], categories: list[str], size: tuple[int, int]
+) -> bb.BaseAnnotation:
+    """BBoxEdit format to BaseAnnotation.
+    size is (width, height) in PIL format.
+    """
+    boxes_xywh = [[b["x"], b["y"], b["width"], b["height"]] for b in bbebb_list]
+    labels = [categories.index(b["label"]) for b in bbebb_list]
+
+    boxes_xyxy = v2F.convert_bounding_box_format(
+        torch.tensor(boxes_xywh),
+        old_format=tv_tensors.BoundingBoxFormat.XYWH,
+        new_format=tv_tensors.BoundingBoxFormat.XYXY,
+    )
+
+    w, h = size
+    return bb.BaseAnnotation(
+        boxes=tv_tensors.BoundingBoxes(
+            boxes_xyxy,
+            format=tv_tensors.BoundingBoxFormat.XYXY,
+            canvas_size=(h, w),
+        ),
+        labels=torch.tensor(labels, dtype=torch.int64),
+    )
+
+
+def ann_to_df(ann: bb.BaseAnnotation, categories: list[str]) -> pd.DataFrame:
+    """Convert BaseAnnotation to DataFrame with columns: category, x, y, w, h"""
+    boxes_xywh = v2F.convert_bounding_box_format(
+        ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
+    ).tolist()
+    labels = ann["labels"].tolist()
+
+    rows = [
+        {
+            "category": categories[label],
+            "x": box[0],
+            "y": box[1],
+            "w": box[2],
+            "h": box[3],
+        }
+        for box, label in zip(boxes_xywh, labels)
+    ]
+    return pd.DataFrame(rows)
+
+
+def df_to_ann(
+    df: pd.DataFrame, categories: list[str], size: tuple[int, int]
+) -> bb.BaseAnnotation:
+    """Convert DataFrame to BaseAnnotation.
+    size is (width, height) in PIL format.
+    """
+    boxes_xywh = df[["x", "y", "w", "h"]].values.tolist()
+    labels = [categories.index(cat) for cat in df["category"]]
+
+    boxes_xyxy = v2F.convert_bounding_box_format(
+        torch.tensor(boxes_xywh),
+        old_format=tv_tensors.BoundingBoxFormat.XYWH,
+        new_format=tv_tensors.BoundingBoxFormat.XYXY,
+    )
+
+    w, h = size
+    return bb.BaseAnnotation(
+        boxes=tv_tensors.BoundingBoxes(
+            boxes_xyxy,
+            format=tv_tensors.BoundingBoxFormat.XYXY,
+            canvas_size=(h, w),
+        ),
+        labels=torch.tensor(labels, dtype=torch.int64),
+    )
