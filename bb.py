@@ -3,6 +3,7 @@
 import json
 import logging
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple, Self, TypedDict, TypeIs, TypeVar
 
@@ -90,7 +91,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         return len(self.coco_dataset)
 
     def __getitem__(self, idx: int) -> MCDatasetItem:
-        item: MCDatasetItem = self.coco_dataset[idx]
+        item = self.coco_dataset[idx]
         image, target = item
 
         # Handle images with no boxes
@@ -106,7 +107,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
             target["labels"] = torch.zeros(0, dtype=torch.int64)
 
         if self.transform:
-            transformed: MCDatasetItem = self.transform(image, target)
+            transformed = self.transform(image, target)
             image, target = transformed
 
         ret = MCDatasetItem(image, target)
@@ -131,7 +132,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         """Return the image absolute path"""
         return Path(self.images_path / self.image_info(idx)["file_name"]).absolute()
 
-    def add_annotation(self, idx: int, ann: BaseAnnotation) -> None:
+    def add_annotation(self, idx: int, new_ann: BaseAnnotation) -> None:
         """Add annotations to an image (replaces existing).
         NOTE: You must run rebuild_index() after completing updates to have the
         changes reflected in the values returned by dataset indexing.
@@ -152,9 +153,9 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
 
         # Convert to XYWH (COCO format) and add annotations
         boxes_xywh = v2.functional.convert_bounding_box_format(
-            ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
+            new_ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
         ).tolist()
-        labels = ann["labels"]
+        labels = new_ann["labels"]
         for i in range(len(boxes_xywh)):
             coco_ann = {
                 "id": next_ann_id + i,
@@ -174,7 +175,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     def save_annotations(self, ann_path: Path | str | None = None) -> None:
         """Save annotations to disk."""
         ann_path = Path(ann_path) if ann_path else self.ann_path
-        with open(self.ann_path, "w") as f:
+        with open(ann_path, "w") as f:
             json.dump(self.coco_dataset.coco.dataset, f, indent=2)
 
     @classmethod
@@ -372,13 +373,15 @@ def torch_plot_bb(
     color_set = tt.Colors().get_rgb()
     cat_ix2color = {cat_ix: color_set[cat_ix] for cat_ix in range(len(categories))}
     colors = [cat_ix2color[cat_ix] for cat_ix in cat_ids]
+    font = "/System/Library/Fonts/Helvetica.ttc" if sys.platform == "darwin" else None
+
     result: torch.Tensor = tv.utils.draw_bounding_boxes(
         img,
         boxes=target["boxes"],
         labels=labels,
         colors=colors,
         width=2,
-        font="/System/Library/Fonts/Helvetica.ttc",  # macOS
+        font=font,
         font_size=20,
     )
     if return_pil:
