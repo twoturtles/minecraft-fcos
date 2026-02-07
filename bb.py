@@ -1,36 +1,19 @@
 """Bounding Boxes and Object Detection Utilities"""
 
-import copy
 import json
 import logging
-import random
 import shutil
 from pathlib import Path
-from typing import (
-    Annotated,
-    Any,
-    Callable,
-    Iterator,
-    Mapping,
-    NamedTuple,
-    Self,
-    Sequence,
-    TypedDict,
-    TypeIs,
-    TypeVar,
-)
+from typing import Any, Callable, Iterator, NamedTuple, Self, TypedDict, TypeIs, TypeVar
 
 import ipywidgets as widgets  # type: ignore
 import pandas as pd
 import torch
 import torchvision as tv  # type: ignore
 from IPython.display import display
-from PIL import Image, ImageDraw
-from pydantic import BaseModel, Field
-from ruamel.yaml import YAML
+from PIL import Image
 from torchvision import tv_tensors
 from torchvision.transforms import v2  # type: ignore
-from ultralytics.engine.results import Results
 
 import tt
 
@@ -128,6 +111,10 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
 
         ret = MCDatasetItem(image, target)
         return ret
+
+    def __iter__(self) -> Iterator[MCDatasetItem]:
+        for i in range(len(self)):
+            yield self[i]
 
     def view(self) -> None:
         BBoxViewer(self).show_widget()
@@ -258,42 +245,28 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         """Convert dataset to DataFrame with absolute xyxy coords.
         Images without annotations get a row with None for bbox fields.
         """
-        coco = self.coco_dataset.coco
         rows = []
-        for img_idx, img_id in enumerate(coco.getImgIds()):
-            img_info = coco.loadImgs(img_id)[0]
-            file_name = img_info["file_name"]
-            anns = coco.loadAnns(coco.getAnnIds(imgIds=img_id))
-
-            if not anns:
+        for idx, item in enumerate(self):
+            boxes = item.target["boxes"].tolist()
+            labels = item.target["labels"].tolist()
+            fname = self.image_info(idx)["file_name"]
+            if len(labels) == 0:
+                labels = [None]
+                boxes = [[None, None, None, None]]
+            for xyxy, label in zip(boxes, labels):
                 rows.append(
                     {
-                        "image_idx": img_idx,
-                        "file": file_name,
-                        "category": None,
-                        "x1": None,
-                        "y1": None,
-                        "x2": None,
-                        "y2": None,
+                        "idx": idx,
+                        "file": fname,
+                        "category": None if label is None else self.id2category[label],
+                        "x1": xyxy[0],
+                        "y1": xyxy[1],
+                        "x2": xyxy[2],
+                        "y2": xyxy[3],
                     }
                 )
-            else:
-                for ann in anns:
-                    xyxy = coco_to_xyxy(ann["bbox"])
-                    rows.append(
-                        {
-                            "image_idx": img_idx,
-                            "file": file_name,
-                            "category": self.id2category[ann["category_id"]],
-                            "x1": xyxy[0],
-                            "y1": xyxy[1],
-                            "x2": xyxy[2],
-                            "y2": xyxy[3],
-                        }
-                    )
-        return pd.DataFrame(
-            rows, columns=["image_idx", "file", "category", "x1", "y1", "x2", "y2"]
-        )
+
+        return pd.DataFrame(rows)
 
     def dataset_stats(self) -> pd.Series:
         """Calculate useful statistics from dataset.
@@ -303,7 +276,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         stats: dict[str, Any] = {}
 
         # Basic counts
-        stats["num_images"] = df["image_idx"].nunique()
+        stats["num_images"] = df["idx"].nunique()
         stats["num_bboxes"] = df["category"].notna().sum()
         stats["avg_bboxes_per_image"] = (
             stats["num_bboxes"] / stats["num_images"]
