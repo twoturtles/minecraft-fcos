@@ -156,13 +156,13 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
             new_ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
         ).tolist()
         labels = new_ann["labels"]
-        for i in range(len(boxes_xywh)):
+        for i, xywh in enumerate(boxes_xywh):
             coco_ann = {
                 "id": next_ann_id + i,
                 "image_id": image_id,
                 "category_id": int(labels[i].item()),
-                "bbox": boxes_xywh,
-                "area": boxes_xywh[2] * boxes_xywh[3],
+                "bbox": xywh,
+                "area": xywh[2] * xywh[3],
                 "iscrowd": 0,
             }
             coco.dataset["annotations"].append(coco_ann)
