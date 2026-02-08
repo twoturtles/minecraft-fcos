@@ -121,12 +121,17 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
     def view(self) -> None:
         BBoxViewer(self).show_widget()
 
+    def idx_to_image_id(self, idx: int) -> int:
+        """For a dataset index, return the coco image_id"""
+        return self[idx].target["image_id"]
+
     def image_info(self, idx: int) -> dict[str, Any]:
         """Return the coco info for an image
         {"id": 3, "file_name": "frame_208322.png",
          "width": 640, "height": 640},
         """
-        info: dict[str, Any] = self.coco_dataset.coco.loadImgs([idx])[0]
+        image_id = self.idx_to_image_id(idx)
+        info: dict[str, Any] = self.coco_dataset.coco.loadImgs([image_id])[0]
         return info
 
     def image_path(self, idx: int) -> Path:
@@ -148,6 +153,12 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
             ann for ann in coco.dataset["annotations"] if ann["image_id"] != image_id
         ]
 
+        labels = new_ann["labels"]
+        if len(labels) == 0:
+            if rebuild_index:
+                self.rebuild_index()
+            return
+
         # Get next annotation id
         if coco.dataset["annotations"]:
             next_ann_id = max(ann["id"] for ann in coco.dataset["annotations"]) + 1
@@ -158,7 +169,6 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         boxes_xywh = v2.functional.convert_bounding_box_format(
             new_ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
         ).tolist()
-        labels = new_ann["labels"]
         for i, xywh in enumerate(boxes_xywh):
             coco_ann = {
                 "id": next_ann_id + i,
@@ -204,7 +214,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
             "images": [],
             "annotations": [],
             "categories": [
-                {"id": id, "name": name} for id, name in enumerate(categories)
+                {"id": idx, "name": name} for idx, name in enumerate(categories)
             ],
         }
 
@@ -252,24 +262,27 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         """Convert dataset to DataFrame with absolute xyxy coords.
         Images without annotations get a row with None for bbox fields.
         """
+        coco = self.coco_dataset.coco
+        image_ids = coco.imgs.keys()
         rows = []
-        for idx, item in enumerate(self):
-            boxes = item.target["boxes"].tolist()
-            labels = item.target["labels"].tolist()
-            fname = self.image_info(idx)["file_name"]
-            if len(labels) == 0:
-                labels = [None]
-                boxes = [[None, None, None, None]]
-            for xyxy, label in zip(boxes, labels):
+        for idx, img_id in enumerate(image_ids):
+            fname = coco.imgs[img_id]["file_name"]
+            anns = coco.imgToAnns.get(img_id, [])
+            if len(anns) == 0:
+                anns = [{"bbox": [None, None, None, None], "category_id": None}]
+            for ann in anns:
+                x, y, w, h = ann["bbox"]
+                cat_id = ann["category_id"]
+                cat = None if cat_id is None else self.id2category[cat_id]
                 rows.append(
                     {
                         "idx": idx,
                         "file": fname,
-                        "category": None if label is None else self.id2category[label],
-                        "x1": xyxy[0],
-                        "y1": xyxy[1],
-                        "x2": xyxy[2],
-                        "y2": xyxy[3],
+                        "category": cat,
+                        "x1": x,
+                        "y1": y,
+                        "x2": None if x is None else x + w,
+                        "y2": None if y is None else y + h,
                     }
                 )
 
