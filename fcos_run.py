@@ -1,9 +1,11 @@
 """
+Run model in realtime on Minecraft
+
 uv run mcio inst launch main -w main -W 640 -H 640
 uv run fcos_run.py <model_path>
 
 Example:
-uv run fcos_run.py /Users/joe/src/data/checkpoints/keep/best.pt
+uv run fcos_run.py ~/data/checkpoints/keep/best.pt
 """
 
 import argparse

@@ -1004,7 +1004,7 @@ requires-dist = [
     { name = "ipywidgets", specifier = ">=8.1.7" },
     { name = "jupyter-bbox-widget", specifier = ">=0.6.0" },
     { name = "matplotlib", specifier = ">=3.10.7" },
-    { name = "mcio-ctrl", editable = "../mcio_ctrl" },
+    { name = "mcio-ctrl", specifier = ">=1.5.0" },
     { name = "numpy", specifier = ">=2.3.3" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "pillow", specifier = ">=11.3.0" },
@@ -1034,8 +1034,8 @@ dev = [
 
 [[package]]
 name = "mcio-ctrl"
-version = "1.4.1.dev1"
-source = { editable = "../mcio_ctrl" }
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cbor2" },
     { name = "dacite" },
@@ -1052,36 +1052,9 @@ dependencies = [
     { name = "ruamel-yaml" },
     { name = "tqdm" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "cbor2", specifier = ">=5.6.5" },
-    { name = "dacite", specifier = ">=1.8.1" },
-    { name = "glfw", specifier = ">=2.7.0" },
-    { name = "gymnasium", specifier = ">=1.0.0" },
-    { name = "imageio", specifier = ">=2.37.0" },
-    { name = "imageio-ffmpeg", specifier = ">=0.6.0" },
-    { name = "minecraft-launcher-lib", specifier = ">=7.1" },
-    { name = "nbt", specifier = ">=1.5.1" },
-    { name = "pillow", specifier = ">=11.0.0" },
-    { name = "pyopengl", specifier = ">=3.1.7" },
-    { name = "pyzmq", specifier = ">=26.2.0" },
-    { name = "requests", specifier = ">=2.32.3" },
-    { name = "ruamel-yaml", specifier = ">=0.18.6" },
-    { name = "tqdm", specifier = ">=4.67.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", specifier = ">=24.10.0" },
-    { name = "isort", specifier = ">=5.13.2" },
-    { name = "mypy", specifier = ">=1.13.0" },
-    { name = "pip" },
-    { name = "pre-commit", specifier = ">=4.0.1" },
-    { name = "pytest", specifier = ">=8.3.4" },
-    { name = "pytest-cov", specifier = ">=6.0.0" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
-    { name = "ruff", specifier = ">=0.8.1" },
+sdist = { url = "https://files.pythonhosted.org/packages/15/7e/633880c0bb38e4a0f33ac90f81685ae79899c90e0f15b1043a75c1a84ea6/mcio_ctrl-1.5.0.tar.gz", hash = "sha256:af2ad804d59555908a8230270c0bb8a8f7e994bc0d650d0965b1f5fa7fea1dc1", size = 41581, upload-time = "2026-02-08T03:44:36.364Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/45/3fe30a97c07c33361c6fe0acf5a53187827c3546ac6b245a274e01613086/mcio_ctrl-1.5.0-py3-none-any.whl", hash = "sha256:1532a125578cf62a1ea727c2e1b90d971d735dc532095a5668e0274110e84d34", size = 51838, upload-time = "2026-02-08T03:44:34.884Z" },
 ]
 
 [[package]]
