@@ -133,7 +133,9 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
         """Return the image absolute path"""
         return Path(self.images_path / self.image_info(idx)["file_name"]).absolute()
 
-    def add_annotation(self, idx: int, new_ann: BaseAnnotation) -> None:
+    def add_annotation(
+        self, idx: int, new_ann: BaseAnnotation, rebuild_index: bool = True
+    ) -> None:
         """Add annotations to an image (replaces existing).
         NOTE: You must run rebuild_index() after completing updates to have the
         changes reflected in the values returned by dataset indexing.
@@ -167,6 +169,9 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
                 "iscrowd": 0,
             }
             coco.dataset["annotations"].append(coco_ann)
+
+        if rebuild_index:
+            self.rebuild_index()
 
     def rebuild_index(self) -> None:
         """Rebuild indices in the underlying pycocotools. This updates the

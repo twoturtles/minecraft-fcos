@@ -10,7 +10,7 @@ import ipywidgets as widgets  # type: ignore
 import pandas as pd
 import torch
 import torchvision.transforms.v2.functional as v2F  # type: ignore
-from ipydatagrid import DataGrid  # type: ignore
+from ipydatagrid import DataGrid, TextRenderer  # type: ignore
 from IPython.display import display
 from jupyter_bbox_widget import BBoxWidget  # type: ignore
 from PIL import Image
@@ -52,10 +52,10 @@ class BBeBB(TypedDict):
 
 
 class BBoxEdit:
-    def __init__(self, input: str | Path) -> None:
+    def __init__(self, root_dir: str | Path) -> None:
         # Load dataset
-        self.file = Path(input)
-        self.dset = bb.MCDataset(self.file)
+        self.root_dir = Path(root_dir)
+        self.dset = bb.MCDataset(self.root_dir)
 
         # Local copy of the current dset item
         self.current_index: int
@@ -83,10 +83,8 @@ class BBoxEdit:
     def display(self) -> None:
         display(self.w.ui)  # type: ignore[no-untyped-call]
 
-    def save(self, path: str | Path | None = None) -> None:
-        if path is None:
-            path = self.file
-        self.dset.save_annotations(path)
+    def save(self) -> None:
+        self.dset.save_annotations()
 
     def _update_display(self) -> None:
         """Update UI from local item copy"""
@@ -219,7 +217,7 @@ class BBoxEdit:
         save.on_click(self._on_save)
 
         buttons = [back, submit, skip]
-        if self.file is not None:
+        if self.root_dir is not None:
             buttons.append(save)
         return widgets.HBox(buttons)
 
@@ -249,6 +247,7 @@ class BBoxEdit:
     ## Grid
 
     def _create_grid_section(self) -> widgets.Box:
+        int_renderer = TextRenderer(format=".0f")
         self.w.grid = DataGrid(
             pd.DataFrame(),
             selection_mode="row",
@@ -257,6 +256,13 @@ class BBoxEdit:
             auto_fit_columns=True,
             auto_fit_params={"area": "all"},
             layout={"height": "100px"},
+            renderers={
+                "x1": int_renderer,
+                "y1": int_renderer,
+                "x2": int_renderer,
+                "y2": int_renderer,
+                "area": int_renderer,
+            },
         )
         self.w.grid.observe(self._grid_selections_change, "selections")
 
