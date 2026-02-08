@@ -20,13 +20,13 @@ import tt
 
 LOG = logging.getLogger(__name__)
 
-DEFAULT_INFO_FNAME: str = "info.json"
-
 _T = TypeVar("_T")
 
 
 class BaseAnnotation(TypedDict):
-    """Common annotation fields"""
+    """Common annotation fields
+    boxes are in XYXY format
+    """
 
     boxes: tv_tensors.BoundingBoxes
     labels: torch.Tensor
@@ -92,6 +92,7 @@ class MCDataset(tv.datasets.VisionDataset):  # type: ignore
 
     def __getitem__(self, idx: int) -> MCDatasetItem:
         item = self.coco_dataset[idx]
+        # Note: the COCO dataset wrapper returns boxes in XYXY format
         image, target = item
 
         # Handle images with no boxes

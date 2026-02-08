@@ -101,7 +101,7 @@ class BBoxEdit:
                 self.current_item.target, self.dset.categories
             )
             df = ann_to_df(self.current_item.target, self.dset.categories)
-            df["area"] = df["h"] * df["w"]
+            df["area"] = (df["x2"] - df["x1"]) * (df["y2"] - df["y1"])
             self.w.grid.data = df
             self._grid_update_height()
             self._update_zoom()
@@ -224,7 +224,6 @@ class BBoxEdit:
         return widgets.HBox(buttons)
 
     def _on_submit(self, button: widgets.Button) -> None:
-        index: int = self.w.index_slider.value
         # Update dset from BBoxEdit
         new_ann = from_bbox_widget(
             self.w.bbox.bboxes, self.dset.categories, self.current_pil.size
@@ -422,23 +421,25 @@ def from_bbox_widget(
 
 
 def ann_to_df(ann: bb.BaseAnnotation, categories: list[str]) -> pd.DataFrame:
-    """Convert BaseAnnotation to DataFrame with columns: category, x, y, w, h"""
-    boxes_xywh = v2F.convert_bounding_box_format(
-        ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYWH
+    """Convert BaseAnnotation to DataFrame with columns: category, x1, y1, x2, y2"""
+    # Should already be in XYXY format
+    boxes_xyxy = v2F.convert_bounding_box_format(
+        ann["boxes"], new_format=tv_tensors.BoundingBoxFormat.XYXY
     ).tolist()
     labels = ann["labels"].tolist()
 
     rows = [
         {
             "category": categories[label],
-            "x": box[0],
-            "y": box[1],
-            "w": box[2],
-            "h": box[3],
+            "x1": box[0],
+            "y1": box[1],
+            "x2": box[2],
+            "y2": box[3],
         }
-        for box, label in zip(boxes_xywh, labels)
+        for box, label in zip(boxes_xyxy, labels)
     ]
-    return pd.DataFrame(rows)
+    # Specifying columns here for the case when there are no rows (image with no boxes)
+    return pd.DataFrame(rows, columns=["category", "x1", "y1", "x2", "y2"])
 
 
 def df_to_ann(
@@ -447,14 +448,8 @@ def df_to_ann(
     """Convert DataFrame to BaseAnnotation.
     size is (width, height) in PIL format.
     """
-    boxes_xywh = df[["x", "y", "w", "h"]].values.tolist()
+    boxes_xyxy = df[["x1", "y1", "x2", "y2"]].values.tolist()
     labels = [categories.index(cat) for cat in df["category"]]
-
-    boxes_xyxy = v2F.convert_bounding_box_format(
-        torch.tensor(boxes_xywh),
-        old_format=tv_tensors.BoundingBoxFormat.XYWH,
-        new_format=tv_tensors.BoundingBoxFormat.XYXY,
-    )
 
     w, h = size
     return bb.BaseAnnotation(
