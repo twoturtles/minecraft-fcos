@@ -8,6 +8,9 @@ Object Detection - Fine-tuning FCOS for Minecraft mobs
 ## Overview
 This repo contains the training code and a script to run the model live on Minecraft through [MCio](https://modrinth.com/mod/mcio).
 
+- [fcos_train.ipynb](fcos_train.ipynb) - Training recipe
+- [fcos_exp.ipynb](fcos_exp.ipynb) - Experiment log
+- [fcos_run.py](fcos_run.py) - Run the model on live Minecraft
 
-
+## Sample
 ![Example Detection](detection.png)
